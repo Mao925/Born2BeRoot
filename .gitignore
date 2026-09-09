@@ -1,0 +1,10 @@
+*.vdi
+*.vmdk
+*.vhd
+*.qcow2
+*.ova
+*.ovf
+*.iso
+*.utm/
+.DS_Store
+*.log
