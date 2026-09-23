@@ -182,5 +182,7 @@ sudo stat -c '%A %U:%G %n' /usr/local/bin/monitoring.sh
 5. その後VMを起動しない。
 
 ~~~bash
-grep -Eq '^[0-9a-fA-F]{40}$' signature.txt
+grep -Eq '^[0-9a-fA-F]{40}
+~~~
+ submit/signature.txt
 ~~~
