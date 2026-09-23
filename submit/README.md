@@ -8,7 +8,7 @@ VirtualBoxを私用Macで使用し、Debian 13 ARM64の仮想サーバーを構�
 
 This README describes the VM shown in terminal output on 2026-09-24. It does **not** claim that every interactive evaluation requirement has passed.
 
-**Before submission: the existing signature.txt is provisional. The VM has changed since it was recorded; recompute SHA-1 after final full shutdown and replace the file.**
+The accompanying signature.txt records the SHA-1 reported from the fully powered-off Born2BeRoot-Manual.vdi on 2026-09-24. If the VM disk is changed or booted again, shut it down fully and recompute the signature.
 
 The submission consists only of this README.md and signature.txt, at the root of the **separate 42 submission repository**. Other learning materials live in the working GitHub repository.
 
@@ -16,14 +16,14 @@ The submission consists only of this README.md and signature.txt, at the root of
 
 ### Required configuration
 
-- Debian 13 ARM64、GUIなし（GUI不在は最終確認要）
+- Debian 13 ARM64、CUI起動。検査したGUI関連パッケージは見つからず、display-manager.serviceも存在しない（網羅的な不在は評価時にも確認）
 - LUKS2内のLVM（root/home/swap）
 - 複数のlogical volume
 - SSHはTCP 4242、rootのSSHログインは禁止
 - UFWは有効、受信許可は4242/TCPのみ
 - hostnameはmhashimo42
 - mhashimoユーザーはuser42とsudoに所属
-- パスワード有効期限・強度ポリシー
+- パスワード有効期限・強度ポリシー（数字不足の拒否動作を確認）
 - sudoの3回制限、独自失敗メッセージ、I/Oログ、TTY、secure_path
 - AppArmorは起動時から有効
 - rootのcronで@rebootと10分ごとにmonitoring.shをwallへパイプ
@@ -71,7 +71,7 @@ sudo crontab -l
 */10 * * * * /usr/local/bin/monitoring.sh | /usr/bin/wall
 ~~~
 
-VM内のsudo設定ファイルは /etc/sudoers.d/born2beroot、コマンドログは /var/log/sudo/sudo.log です。監視の定期配信などは評価前に実機で確認してください。
+VM内のsudo設定ファイルは /etc/sudoers.d/born2beroot、コマンドログは /var/log/sudo/sudo.log です。cronによる10分ごとのVirtualBoxコンソールへの表示は確認済みです。一方、Debian 13のSSH端末へのwall配信は未解決で、全端末に届くことまでは確認できていません。
 
 ## Acceptance matrix
 
@@ -85,7 +85,7 @@ VM内のsudo設定ファイルは /etc/sudoers.d/born2beroot、コマンドロ�
 | UFW | ufw status verbose | active、受信は4242のみ |
 | AppArmor | aa-status | module loaded |
 | aging | chage -l | 30 / 2 / 7 |
-| password quality | pwquality.conf、PAM | 10文字・3文字種等 |
+| password quality | pwquality.conf、PAM | 10文字以上、大文字・小文字・数字必須等 |
 | sudo | visudo -c、実演 | 3回、メッセージ、I/Oログ、TTY、secure_path |
 | monitoring | 手動実行、cron | 12項目、起動時・10分ごと |
 | signature | VM完全停止後のSHA-1 | 40桁のみ |
@@ -104,7 +104,7 @@ AppArmorはパス中心のプロファイル、SELinuxはラベルとポリシ�
 ## Resources
 
 - https://www.debian.org/
-- https://www.debian.org/releases/stable/amd64/
+- https://www.debian.org/releases/stable/
 - https://man.openbsd.org/sshd_config
 - https://manpages.debian.org/stable/ufw/ufw.8.en.html
 - https://man7.org/linux/man-pages/man8/cryptsetup.8.html
@@ -118,4 +118,4 @@ AIは、要件の整理、レビュー観点の分類、文章の推敲、シェ
 
 ## Signature
 
-VMの全設定とテスト完了後、完全停止した実際の.vdiファイルからMac上でshasumを実行し、40桁のSHA-1値だけをsignature.txtへ保存します。現在の値は**暫定で一致未確認**です。VMを変更・起動したら取り直してください。
+2026-09-24、VirtualBoxで電源オフを確認後、Mac上で実際のBorn2BeRoot-Manual.vdiに対してshasum -a 1を実行し、得られた40桁の値をsignature.txtへ保存しました。**以後VMを起動・変更した場合は再度完全停止してハッシュを更新してください。**
