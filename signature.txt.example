@@ -1,3 +1,0 @@
-# Create signature.txt only after the VM is completely powered off.
-# Put exactly one 40-character SHA-1 digest in signature.txt.
-# Linux: sha1sum "$HOME/VirtualBox VMs/<VM名>/<VM名>.vdi"

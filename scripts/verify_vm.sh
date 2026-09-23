@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Born2beRoot read-only acceptance checks.
+# Read-only PARTIAL checks: interactive requirements and signature still require manual verification.
 # Run as root or with sudo. This script does not modify the VM.
 set -u
 
@@ -81,7 +81,7 @@ grep -Eq 'pam_pwquality\.so' /etc/pam.d/common-password 2>/dev/null && ok "pam_p
 
 section "Sudo"
 visudo -c >/dev/null 2>&1 && ok "sudoers syntax is valid" || bad "sudoers syntax check failed"
-sudo_policy=/etc/sudoers.d/42-security
+sudo_policy=/etc/sudoers.d/born2beroot
 [ -f "$sudo_policy" ] && ok "$sudo_policy exists" || bad "$sudo_policy is missing"
 if [ -f "$sudo_policy" ]; then
   mode=$(stat -c '%a' "$sudo_policy" 2>/dev/null || true)
@@ -94,7 +94,7 @@ done
 section "Monitoring"
 monitor=/usr/local/bin/monitoring.sh
 [ -x "$monitor" ] && ok "monitoring.sh is executable" || bad "monitoring.sh is missing or not executable"
-if [ -f /etc/crontab ] && grep -Eq '^[^#].*/usr/local/bin/monitoring\.sh' /etc/crontab; then
+if crontab -l 2>/dev/null | grep -Eq '^[^#].*/usr/local/bin/monitoring\.sh'; then
   ok "monitoring.sh is active in /etc/crontab"
 else
   warning "active monitoring cron entry not found"

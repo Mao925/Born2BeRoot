@@ -1,3 +1,5 @@
+> 実VMに合わせた確認: root/home/swap、sudoers.d/born2beroot、root crontab、sudo.log、最終署名を参照してください。
+
 # Review checklist
 
 Born2beRootの評価前にVM上で実行する確認手順。出力の意味を説明できることを合格条件にする。
@@ -120,7 +122,7 @@ grep -n pam_pwquality /etc/pam.d/common-password
 
 ~~~bash
 sudo visudo -c
-sudo stat -c '%A %U:%G %n' /etc/sudoers.d/42-security
+sudo stat -c '%A %U:%G %n' /etc/sudoers.d/born2beroot
 sudo grep -R -E 'passwd_tries|badpass_message|log_input|log_output|iolog_dir|requiretty|secure_path' /etc/sudoers /etc/sudoers.d
 sudo -k
 sudo -l
@@ -150,7 +152,7 @@ AppArmor、SSH、UFW、cronが起動時有効かつactiveであることを確�
 
 ~~~bash
 sudo /usr/local/bin/monitoring.sh
-sudo grep -nE '(@reboot|\\*/10)' /etc/crontab /etc/cron.d/* 2>/dev/null
+sudo crontab -l
 sudo stat -c '%A %U:%G %n' /usr/local/bin/monitoring.sh
 ~~~
 

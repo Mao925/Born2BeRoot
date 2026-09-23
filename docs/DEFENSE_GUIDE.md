@@ -1,3 +1,5 @@
+> 実VMはDebian 13 ARM64、hostname mhashimo42、LUKS2内のroot/home/swapです。VM内のmonitoring.shはstdoutへ表示し、root crontabがwallへパイプします。旧設計と混同しないこと。
+
 # Defense guide
 
 Born2beRootのレビュイーが、設定の事実と理由を自分の言葉で説明するための学習メモ。
@@ -110,7 +112,7 @@ aptは日常操作・スクリプトで標準的。aptitudeは依存関係の候
 | TCP | ss |
 | users | who |
 | network | ip / sysfs |
-| sudo | auth.log / journal |
+| sudo | /var/log/sudo/sudo.log |
 
 値が空なら、まず取得元コマンドを単体実行する。ネットワークインターフェース名、journalの有無、ログ形式などVM差を説明できるようにする。
 
