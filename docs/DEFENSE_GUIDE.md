@@ -90,7 +90,8 @@ aptは日常操作・スクリプトで標準的。aptitudeは依存関係の候
 ## 8. cron and wall
 
 ~~~cron
-*/10 * * * * root /usr/local/bin/monitoring.sh
+@reboot /usr/local/bin/monitoring.sh | /usr/bin/wall
+*/10 * * * * /usr/local/bin/monitoring.sh | /usr/bin/wall
 ~~~
 
 分フィールドが0,10,20,30,40,50のときrootとして実行する。@rebootは起動時に1回。wallはログイン中の端末へメッセージをブロードキャストする。
@@ -102,17 +103,17 @@ aptは日常操作・スクリプトで標準的。aptitudeは依存関係の候
 | 項目 | 取得元 |
 | --- | --- |
 | architecture | uname -a |
-| physical CPU | /proc/cpuinfo |
-| vCPU | nproc |
+| physical CPU | lscpu -p=SOCKET |
+| vCPU | /proc/cpuinfo の processor 行数 |
 | RAM | free |
 | storage | df |
 | CPU usage | /proc/statの差分 |
-| last boot | who -b / uptime |
+| last boot | uptime -s |
 | LVM | lsblk |
 | TCP | ss |
 | users | who |
 | network | ip / sysfs |
-| sudo | /var/log/sudo/sudo.log |
+| sudo | /var/log/sudo/sudo.log の COMMAND= 件数 |
 
 値が空なら、まず取得元コマンドを単体実行する。ネットワークインターフェース名、journalの有無、ログ形式などVM差を説明できるようにする。
 
