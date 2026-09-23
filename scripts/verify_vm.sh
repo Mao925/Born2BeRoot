@@ -95,9 +95,9 @@ section "Monitoring"
 monitor=/usr/local/bin/monitoring.sh
 [ -x "$monitor" ] && ok "monitoring.sh is executable" || bad "monitoring.sh is missing or not executable"
 if crontab -l 2>/dev/null | grep -Eq '^[^#].*/usr/local/bin/monitoring\.sh'; then
-  ok "monitoring.sh is active in /etc/crontab"
+  ok "monitoring.sh is listed in current crontab"
 else
-  warning "active monitoring cron entry not found"
+  warning "monitoring job not found in current crontab"
 fi
 
 section "Summary"
