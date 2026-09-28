@@ -1,85 +1,206 @@
-> このファイルがBorn2beRootのレビュー準備に使う唯一の資料です。実VMはDebian 13 ARM64、hostname `mhashimo42`、LUKS2内のLVMはroot/home/swapです。旧設計と混同しないでください。
+# Born2beRoot Review Guide（Mandatory only）
 
-# Born2beRoot review guide
+> このファイルをレビュー準備の主資料として使う。Bonusは実施していないため、本書では扱わない。
+>
+> 対象VM: VirtualBox / Debian 13 ARM64 / hostname `mhashimo42` / user `mhashimo`
 
-このガイドは、評価前の実機確認、評価中の説明、最後の自己テストを一つにまとめたものです。コマンドの出力を見せるだけでなく、「何を確認しているか」「なぜ必要か」を自分の言葉で説明できることを完了条件にします。
+レビューでは、設定結果を見せるだけでは不十分である。各項目について、次の3点を自分の言葉で説明できる状態を目指す。
 
-## 1. 最初に把握する実VMの状態
+1. 何を設定したか
+2. なぜその設定が必要か
+3. どのコマンド・ファイルで確認または変更できるか
 
-| 項目            | 実VMで確認した状態                                                |
-| --------------- | ----------------------------------------------------------------- |
-| 仮想化・OS      | VirtualBox（私用Mac）、Debian 13 ARM64、CUI起動                   |
-| hostname / user | `mhashimo42` / `mhashimo`（`sudo`、`user42`所属）         |
-| storage         | EFI、`/boot`、LUKS2 → LVM root (`/`)、home (`/home`)、swap |
-| SSH / UFW       | SSH 4242、root login禁止、UFW active、受信許可は4242/tcpのみ      |
-| password        | rootとmhashimoは30/2/7日、`pam_pwquality`を設定                 |
-| sudo            | `/etc/sudoers.d/born2beroot`、ログは`/var/log/sudo/sudo.log`  |
-| services        | AppArmor、SSH、UFW、cronがenabledかつactive                       |
-| monitoring      | スクリプトはstdoutへ出力し、root crontabが`wall`へパイプ        |
-| cron            | `@reboot`および`*/10 * * * *`                                 |
+---
 
-* [ ] 確認済みなのは、テストユーザーのSSH接続と削除、数字を含まないパスワードの拒否、sudoの3回失敗制限とI/Oログ、VirtualBoxコンソールへの10分ごとのcron配信です。
+## 0. このVMの構成
 
-評価前に残っている確認事項は次のとおりです。
+| 項目 | 実VMの構成 |
+| --- | --- |
+| 仮想化 | VirtualBox（私用Mac） |
+| OS | Debian 13 ARM64、CUI起動 |
+| hostname | `mhashimo42` |
+| user | `mhashimo`（`sudo`、`user42`所属） |
+| storage | EFI、`/boot`、LUKS2 → LVM root・home・swap |
+| SSH | TCP 4242、root login禁止 |
+| UFW | active、incoming deny、4242/tcpのみ許可 |
+| password | rootと`mhashimo`に30/2/7日のaging、PAM品質規則 |
+| sudo | `/etc/sudoers.d/born2beroot`、ログは`/var/log/sudo/` |
+| services | AppArmor、SSH、UFW、cronがenabledかつactive |
+| monitoring | `/usr/local/bin/monitoring.sh`をroot crontabから`wall`へ渡す |
+| schedule | `@reboot`および10分ごと |
 
-- GUIが網羅的に入っていないこと
-- SSH端末にも`wall`が届くこと（VirtualBoxコンソールへの配信は確認済み）
-- 評価開始時のsnapshot状態と私用Macを使う評価運用
-- VMを起動・変更した場合のsignature再取得
+実VMに存在するLVはroot、home、swapである。`/var`、`/var/log`、`/tmp`などを個別LVにしたとは説明しない。
 
-## 2. 安全に確認するための原則
+---
 
-- VMコンソールを復旧経路として残す。
-- SSH設定は`sshd -t`、sudo設定は`visudo -c`で検証してからサービスを再起動する。
-- UFWは4242/tcpを許可してから有効化する。
-- 動作中のSSHセッションを閉じる前に、別端末から新しい接続に成功することを確認する。
-- passwordとLUKS passphraseをリポジトリや画面共有に出さない。
-- signature取得後はVMを起動しない。起動または変更したら完全停止後に再取得する。
+## 1. レビュー開始前の確認
 
-## 3. セキュリティ全体像
+### 1.1 署名と仮想ディスク
 
-```text
-保存データ -> LUKS
-容量管理   -> LVM
-リモート入口 -> SSH 4242 / root login禁止
-ネットワーク入口 -> UFW
-権限昇格   -> sudo
-認証品質   -> PAM / pwquality / chage
-プロセス制御 -> AppArmor
-定期観測   -> cron / monitoring.sh / wall
+- [ ] `submit/signature.txt`が40桁のSHA-1である
+- [ ] レビュー対象の`.vdi`から計算したSHA-1と完全に一致する
+- [ ] VMは保存状態ではなく、完全に電源OFFになっている
+- [ ] snapshotを使用していない
+- [ ] SHA-1取得後に対象VMを起動・変更していない
+- [ ] VMの場所とVirtualBoxでの起動方法を把握している
+
+署名はGitのcommit hashではない。電源を切った仮想ディスクファイルそのものに対するSHA-1である。
+
+```bash
+# macOS側
+shasum "/path/to/Born2BeRoot-Manual.vdi"
+
+# リポジトリ内の形式確認
+grep -Eq '^[0-9a-fA-F]{40}$' submit/signature.txt
 ```
 
-単一の設定で安全にするのではなく、保存、ネットワーク、権限、認証、実行制御を層として組み合わせています。
+VMを起動すると仮想ディスクが変更される可能性がある。起動または設定変更をした場合は、完全停止後にSHA-1を取り直す。
 
-## 4. OS、hostname、GUI
+### 1.2 起動後の一括確認
+
+レビュー練習時は、次のコマンドで基本状態を確認する。
+
+```bash
+hostnamectl
+cat /etc/os-release
+systemctl get-default
+lsblk -f
+id mhashimo
+sudo chage -l mhashimo
+sudo visudo -c
+sudo ufw status numbered
+sudo systemctl status ssh --no-pager
+sudo sshd -t
+sudo crontab -l
+sudo /usr/local/bin/monitoring.sh
+```
+
+---
+
+## 2. Project overview
+
+### 2.1 仮想マシンとは何か
+
+短い回答例:
+
+> 仮想マシンは、物理PCのCPU、メモリ、ディスク、ネットワークなどをソフトウェアで仮想化し、独立したゲストOSを動かす環境です。このVMではMacがホスト、Debianがゲスト、VirtualBoxがハイパーバイザーです。
+
+説明できること:
+
+- ホストOS: VirtualBoxを動かしている側のOS
+- ゲストOS: VM内で動作するOS
+- ハイパーバイザー: 仮想ハードウェアを提供し、VMを管理するソフトウェア
+- 利点: 隔離、再現性、検証のしやすさ、複数OSの利用
+- 欠点: CPU・RAM・ストレージのオーバーヘッド、ホスト障害の影響
+
+### 2.2 Debianを選んだ理由
+
+短い回答例:
+
+> Debianは安定性を重視し、情報とパッケージが豊富で、初めてのサーバー管理でも構成を理解しやすいため選びました。
+
+### 2.3 DebianとRocky Linuxの違い
+
+| Debian | Rocky Linux |
+| --- | --- |
+| Debian系 | RHEL互換系 |
+| `.deb` | `.rpm` |
+| APT / dpkg | DNF / RPM |
+| AppArmorが一般的 | SELinuxが一般的 |
+| コミュニティ主導 | Enterprise Linux互換を重視 |
+
+### 2.4 `apt`と`aptitude`
+
+- `apt`: 日常的なパッケージ操作向けの標準的なCLIフロントエンド
+- `aptitude`: 対話UIを持ち、依存関係の解決候補を確認しやすいフロントエンド
+- どちらも低レベルではdpkgやAPTの仕組みを利用する
+
+```bash
+apt --version
+aptitude --version
+```
+
+### 2.5 AppArmor
+
+短い回答例:
+
+> AppArmorはLinux Security Modulesを利用する強制アクセス制御です。プログラムごとのprofileで、読み書きや実行を許可するパスや操作を制限します。通常のUNIX権限を突破された場合にも追加の制限として働きます。
+
+```bash
+sudo aa-status
+systemctl is-enabled apparmor
+systemctl is-active apparmor
+```
+
+UFWはネットワーク通信を制御し、AppArmorはプロセスの操作を制御する。役割は異なる。
+
+---
+
+## 3. OS、hostname、GUI
 
 ```bash
 hostnamectl
 cat /etc/hostname
 cat /etc/hosts
 cat /etc/os-release
+uname -a
 systemctl get-default
-systemctl status display-manager
+systemctl status display-manager --no-pager
 ```
 
-確認すること:
+確認事項:
 
-- hostnameが`mhashimo42`
-- Debian 13である
-- default targetが`graphical.target`ではない
-- display manager、デスクトップ環境、X.org、Waylandを導入していない
+- hostnameは`mhashimo42`
+- OSはDebian 13 ARM64
+- 起動targetは`multi-user.target`
+- display managerやデスクトップ環境を導入していない
 
-GUIなしなのは、GUIではなくサーバー管理を評価する課題要件だからです。後から削除するより、インストール時から選択しない方が確実です。
+CUIのみなのは、GUIに頼らずサーバー管理を学ぶ課題であり、不要なパッケージや攻撃対象を増やさないためでもある。
 
-## 5. LUKSとLVM
+### hostname変更の実演
 
-LUKSはブロックデバイスを暗号化する標準形式です。LVMはPVをVGという容量プールにまとめ、LVを切り出して容量を管理します。
+レビューではhostnameを変更し、再起動後も反映されているか確認される可能性がある。
+
+```bash
+sudo hostnamectl set-hostname evaluator42
+sudoedit /etc/hosts
+sudo reboot
+
+# 再ログイン後
+hostnamectl
+cat /etc/hostname
+cat /etc/hosts
+```
+
+`/etc/hosts`内の旧hostnameも更新する。確認後、指示に従って`mhashimo42`へ戻す。
+
+---
+
+## 4. LUKS、LVM、パーティション
+
+### 4.1 全体構造
 
 ```text
-disk -> partition -> LUKS -> PV -> VG -> LV -> filesystem
+physical disk
+└── partition
+    └── LUKS encrypted container
+        └── PV (Physical Volume)
+            └── VG (Volume Group)
+                ├── LV root  -> /
+                ├── LV home  -> /home
+                └── LV swap  -> swap
 ```
 
-LUKSだけでは容量管理にならず、LVMだけでは暗号化になりません。このVMで実際に確認済みのLVはroot、home、swapです。旧設計にあった`/var`、`/var/log`、`/tmp`などの個別LVは作成済みと説明しないでください。
+- LUKS: ブロックデバイスを暗号化し、保存データを保護する
+- PV: LVMが利用する物理領域
+- VG: 1つ以上のPVをまとめた容量プール
+- LV: VGから必要な容量を切り出した論理ボリューム
+- filesystem: LV上に作られ、ファイルを保存する形式
+- mount point: filesystemをディレクトリツリーへ接続する場所
+
+LUKSは暗号化を担当し、LVMは容量管理を担当する。LVMだけでは暗号化されず、LUKSだけでは柔軟な論理ボリューム管理にならない。
+
+### 4.2 確認コマンド
 
 ```bash
 lsblk
@@ -87,221 +208,393 @@ lsblk -f
 findmnt /
 findmnt /home
 swapon --show
+sudo pvs
+sudo vgs
+sudo lvs
 ```
 
-確認・説明すること:
+説明できること:
 
-- `crypto_LUKS`の下に複数のLVM logical volumeがある
-- root、homeのfilesystemとmount pointが意図どおりで、swapが有効
-- `/boot`は通常GRUBが読むためLUKSの外側にある
-- LVを分けると容量枯渇の影響範囲を分けやすく、容量変更にも対応しやすい
+- `crypto_LUKS`の内側にLVMがあること
+- root、home、swapの役割
+- `/boot`が暗号化領域の外側にある理由
+- LVを分けると容量管理や影響範囲の分離がしやすいこと
+- swapはRAM不足時の退避領域だが、RAMより遅いこと
 
-## 6. ユーザーとグループ
+---
+
+## 5. ユーザーとグループ
 
 ```bash
 id mhashimo
-getent group user42
-getent group sudo
 getent passwd mhashimo
+getent group sudo
+getent group user42
 ```
 
-`mhashimo`が`user42`と`sudo`に所属することを確認します。評価者から新規ユーザー作成を求められた場合の例は次のとおりです。
+`mhashimo`が`sudo`と`user42`に所属していることを示す。
+
+### 新規ユーザーとグループの実演
 
 ```bash
 sudo adduser reviewer42
-sudo usermod -aG user42 reviewer42
+sudo groupadd evaluating
+sudo usermod -aG evaluating reviewer42
+
 id reviewer42
+getent group evaluating
+sudo chage -l reviewer42
+```
+
+説明できること:
+
+- `adduser`: Debianの対話的な高レベルツール
+- `useradd`: より低レベルなユーザー作成コマンド
+- `/etc/passwd`: アカウント情報
+- `/etc/shadow`: password hashとaging情報
+- `/etc/group`: グループ情報
+- `usermod -aG`: 既存の補助グループを維持して追加する
+- `-a`なしの`usermod -G`は既存の補助グループを失わせる危険がある
+
+テストユーザーを削除する場合は、評価者の指示を確認してから実行する。
+
+```bash
 sudo deluser --remove-home reviewer42
 ```
 
-## 7. SSHとUFW
+---
 
-SSHは暗号化されたリモート管理プロトコルです。4242は課題要件ですが、ポート変更だけで安全になるわけではありません。一般ユーザーで接続し、必要なコマンドだけ`sudo`で昇格することでrootの直接ログインを避けます。
+## 6. パスワードポリシー
 
-UFWはiptables/nftablesを扱うフロントエンドです。基本方針はincoming deny、outgoing allow、4242/tcp allowです。
+password agingとpassword qualityは別の仕組みである。
 
-```bash
-sudo sshd -t
-sudo sshd -T | grep -E '^(port|permitrootlogin) '
-sudo ss -ltnp
-sudo ufw status numbered
-sudo ufw status verbose
-```
+| 設定場所 | 役割 |
+| --- | --- |
+| `/etc/login.defs` | 新規ユーザーに対するagingのデフォルト |
+| `chage` | 既存ユーザーごとのaging |
+| PAM | password変更時の認証処理 |
+| `pam_pwquality` | passwordの文字構成や強度を検査 |
+| `/etc/security/pwquality.conf` | 品質規則の設定値 |
 
-確認すること:
+### 6.1 課題の設定値
 
-- SSHは4242でlistenしている
-- `permitrootlogin no`
-- UFWはactive、incoming default deny
-- 4242/tcp以外に不要な受信許可がない
-- 別端末から`mhashimo`の接続に成功し、rootの接続は拒否される
+| 項目 | 設定 |
+| --- | --- |
+| 最大有効日数 | 30日 |
+| 最小変更間隔 | 2日 |
+| 期限警告 | 7日前 |
+| 最小文字数 | 10文字 |
+| 文字種 | 大文字・小文字・数字を各1文字以上 |
+| 同一文字の連続 | 最大3文字 |
+| username | passwordに含めない |
+| 旧passwordとの差 | 7文字以上 |
+| root | 品質規則を適用。ただし旧passwordとの差の検証は非rootで確認する |
 
-rootは全権限を持つため、root SSHを許すと認証突破時の被害が一般ユーザー経由のsudoより大きくなります。設定を変更するときは4242を許可してからUFWを有効化し、接続確認まで既存セッションとVMコンソールを残します。
-
-## 8. パスワードポリシー
-
-password agingとpassword qualityは別の仕組みです。
-
-- `/etc/login.defs`: 新規ユーザーに適用するagingのデフォルト
-- `chage`: 既存アカウントのaging
-- PAMの`pam_pwquality`: password変更時の品質判定
-- `/etc/security/pwquality.conf`: 品質ルールの値
+### 6.2 確認コマンド
 
 ```bash
 grep -E '^(PASS_MAX_DAYS|PASS_MIN_DAYS|PASS_WARN_AGE)' /etc/login.defs
 sudo chage -l mhashimo
 sudo chage -l root
-grep -E '^(minlen|ucredit|lcredit|dcredit|maxrepeat|usercheck|difok)' /etc/security/pwquality.conf
+grep -Ev '^\s*(#|$)' /etc/security/pwquality.conf
 grep -n pam_pwquality /etc/pam.d/common-password
 ```
 
-期待値:
+期待する主要値:
 
 ```text
-PASS_MAX_DAYS=30
-PASS_MIN_DAYS=2
-PASS_WARN_AGE=7
-minlen=10
-ucredit=-1
-lcredit=-1
-dcredit=-1
-maxrepeat=3
-usercheck=1
-difok=7
+PASS_MAX_DAYS 30
+PASS_MIN_DAYS 2
+PASS_WARN_AGE 7
+minlen = 10
+ucredit = -1
+lcredit = -1
+dcredit = -1
+maxrepeat = 3
+usercheck = 1
+difok = 7
 ```
 
-`credit`が負数なのは、その文字種を少なくとも1文字要求するためです。`maxrepeat=3`は同一文字4連続を拒否します。`difok=7`の課題上の動作確認は非rootユーザーで行います。実際のpasswordは見せず、無効な候補と有効な候補の結果だけを説明します。
+注意点:
 
-## 9. sudo
+- `login.defs`の変更は既存ユーザーへ自動反映されるとは限らないため、`chage`で設定する
+- `ucredit=-1`などの負数は、その文字種を最低1文字要求する
+- `maxrepeat=3`は同一文字4連続を拒否する
+- passwordそのものはリポジトリ、メモ、画面共有へ出さない
+- 強いpasswordは推測・総当たりを難しくする一方、過度な定期変更は使い回しやメモを誘発する欠点もある
 
-sudoは、許可されたユーザーが必要なコマンドだけ一時的に別ユーザー（通常はroot）の権限で実行する仕組みです。
+---
 
-| 設定                           | 意味                         |
-| ------------------------------ | ---------------------------- |
-| `passwd_tries=3`             | 認証試行を3回に制限          |
-| `badpass_message`            | 失敗時に独自メッセージを表示 |
-| `log_input` / `log_output` | 入出力を記録                 |
-| `iolog_dir`                  | I/Oログの保存先              |
-| `requiretty`                 | TTYなしの実行を拒否          |
-| `secure_path`                | sudo実行時のPATHを固定       |
+## 7. sudo
+
+短い回答例:
+
+> sudoは、許可された一般ユーザーが必要なコマンドだけを一時的に別ユーザー、通常はrootの権限で実行する仕組みです。常時rootで作業するより、誤操作を減らし、誰が何を実行したか記録できます。
+
+`su`は別ユーザーのshellへ切り替え、`su -`はそのユーザーのlogin環境も読み込む。`sudo`は許可された個別コマンドを昇格して実行する。
+
+### 7.1 設定の意味
+
+| 設定 | 意味 |
+| --- | --- |
+| `passwd_tries=3` | password入力を3回に制限 |
+| `badpass_message` | 認証失敗時の独自メッセージ |
+| `log_input` / `log_output` | sudoセッションの入出力を記録 |
+| `iolog_dir` | I/Oログの保存先 |
+| `logfile` | sudoイベントのログファイル |
+| `requiretty` | TTYのないsudo実行を拒否 |
+| `secure_path` | sudo実行時のPATHを信頼済みパスに固定 |
+
+### 7.2 確認コマンド
 
 ```bash
 sudo visudo -c
 sudo stat -c '%A %U:%G %n' /etc/sudoers.d/born2beroot
-sudo grep -R -E 'passwd_tries|badpass_message|log_input|log_output|iolog_dir|requiretty|secure_path' /etc/sudoers /etc/sudoers.d
-sudo -k
+sudo grep -R -E 'passwd_tries|badpass_message|log_input|log_output|iolog_dir|logfile|requiretty|secure_path' \
+  /etc/sudoers /etc/sudoers.d
 sudo -l
-sudo find /var/log/sudo -maxdepth 2 -type f -print
+sudo find /var/log/sudo -maxdepth 3 -type f -print
 ```
 
-確認すること:
-
-- sudoersのsyntaxがvalid
-- policy fileはroot所有で、一般ユーザーが書き込めない
-- password試行3回、独自メッセージ、TTY、`secure_path`が設定されている
-- `/var/log/sudo/`にI/Oログが生成される
-
-sudoersのsyntax errorはsudo全体を壊す可能性があります。`/etc/sudoers`を直接編集せず、`visudo -f /etc/sudoers.d/born2beroot`を使います。
-
-## 10. AppArmor、サービス、パッケージ管理
+`visudo`を使うのは、保存前にsudoersの構文を検証し、同時編集を防ぐためである。設定変更には次を使う。
 
 ```bash
-systemctl is-enabled apparmor ssh ufw cron
-systemctl is-active apparmor ssh ufw cron
-sudo aa-status
+sudo visudo -f /etc/sudoers.d/born2beroot
 ```
 
-4サービスが起動時有効かつactiveであり、AppArmor moduleとprofileが読み込まれていることを確認します。
+レビューではsudoコマンドを1回実行し、`/var/log/sudo/`のログが更新されたことを説明できるようにする。
 
-AppArmorとSELinuxは、どちらもLinux Security Modulesを利用するMAC（強制アクセス制御）です。
+---
 
-- AppArmorはプログラムのパスを中心にprofileを記述し、比較的導入しやすい
-- SELinuxはファイルやプロセスにlabelを付け、label間のpolicyで許可・拒否する
-- DebianではAppArmor、Rocky LinuxではSELinuxを使う
-- UFWはネットワーク通信、AppArmorはプロセスの操作を制御するため、役割が異なる
+## 8. UFW
 
-`apt`は日常操作やスクリプトで標準的に使われます。`aptitude`は依存関係の候補を対話的に検討しやすいツールです。どちらもパッケージ管理のフロントエンドです。
+短い回答例:
 
-## 11. cron、wall、monitoring.sh
+> UFWはnetfilterのルール管理を簡単にするファイアウォール用フロントエンドです。このVMでは受信を原則拒否し、SSHに必要なTCP 4242だけを許可しています。
 
-VM上の`/usr/local/bin/monitoring.sh`は標準出力へ表示し、rootのcrontabがその出力を`wall`へ渡します。
+```bash
+sudo systemctl is-enabled ufw
+sudo systemctl is-active ufw
+sudo ufw status verbose
+sudo ufw status numbered
+```
+
+確認事項:
+
+- UFWがactive
+- default incomingがdeny
+- 4242/tcpがallow
+- 不要な受信許可がない
+
+### ルール追加・削除の実演
+
+```bash
+sudo ufw allow 8080/tcp
+sudo ufw status numbered
+sudo ufw delete <8080のルール番号>
+sudo ufw status numbered
+```
+
+番号は追加・削除のたびに変わり得るため、表示を確認してから削除する。SSH設定中は、4242/tcpの許可を消さない。
+
+---
+
+## 9. SSH
+
+短い回答例:
+
+> SSHは、暗号化された通信でリモートマシンへログインし、コマンドを実行するプロトコルです。`ssh`がクライアント、`sshd`がサーバーです。このVMでは4242番ポートを使用し、rootの直接ログインを禁止しています。
+
+ポートを22から4242へ変更するだけで強固な認証になるわけではない。不要な自動スキャンを減らす補助的な対策であり、root login禁止、強いpassword、UFWなどと組み合わせる。
+
+### 9.1 VM内での確認
+
+```bash
+sudo systemctl is-enabled ssh
+sudo systemctl is-active ssh
+sudo sshd -t
+sudo sshd -T | grep -E '^(port|permitrootlogin) '
+sudo ss -lntp
+```
+
+期待する状態:
+
+```text
+port 4242
+permitrootlogin no
+```
+
+- `sshd -t`: 設定ファイルの構文を検証する
+- `sshd -T`: includeやdefaultを含めた有効設定を表示する
+- `ss -lntp`: 実際にlistenしているTCPポートとprocessを表示する
+
+### 9.2 ホストMacからの接続
+
+VirtualBoxのNAT port forwardingを使用している場合:
+
+```bash
+ssh -p 4242 mhashimo@127.0.0.1
+ssh -p 4242 reviewer42@127.0.0.1
+ssh -p 4242 root@127.0.0.1
+```
+
+確認事項:
+
+- 一般ユーザーで接続できる
+- レビュー中に作成したユーザーでも接続できる
+- rootでは接続できない
+
+SSH設定を変更するときは、VMコンソールと現在のSSH接続を復旧経路として残し、`sshd -t`後にreloadまたはrestartし、別端末から新規接続を確認する。
+
+---
+
+## 10. monitoring.sh、cron、wall
+
+### 10.1 構成
+
+`/usr/local/bin/monitoring.sh`は情報を標準出力へ表示し、rootのcrontabが出力を`wall`へ渡す。
 
 ```cron
 @reboot /usr/local/bin/monitoring.sh | /usr/bin/wall
 */10 * * * * /usr/local/bin/monitoring.sh | /usr/bin/wall
 ```
 
-`*/10`は分フィールドが0、10、20、30、40、50のときにrootとして実行する指定です。`@reboot`は起動時に1回実行します。`wall`はログイン中の端末へメッセージをbroadcastします。
+- `cron`: 指定した時刻・間隔でコマンドを実行するdaemon
+- `@reboot`: 起動時に1回実行
+- `*/10`: 毎時0、10、20、30、40、50分に実行
+- `wall`: ログイン中の端末へ標準入力の内容をbroadcastする
+
+### 10.2 表示する12項目
+
+| 項目 | 主な取得元 | 説明 |
+| --- | --- | --- |
+| architecture / kernel | `uname -a` | OSアーキテクチャとkernel version |
+| physical CPU | `lscpu`、`/proc/cpuinfo` | 物理CPU・socket数 |
+| vCPU | `lscpu`、`/proc/cpuinfo` | VMへ割り当てた論理CPU数 |
+| RAM | `free` | 使用量、総量、使用率 |
+| storage | `df` | 使用量、総量、使用率 |
+| CPU load | `/proc/stat`など | 現在のCPU使用率 |
+| last boot | `uptime -s`、`who -b` | 最終起動日時 |
+| LVM | `lsblk`など | LVMが有効か |
+| TCP connections | `ss` | ESTABLISHED状態の接続数 |
+| users | `who` | ログイン中のユーザー数 |
+| IPv4 / MAC | `ip` | ネットワークアドレス |
+| sudo count | sudo log | 実行されたsudo command数 |
+
+スクリプト内で使用している`grep`、`awk`、`sed`、`wc`なども、各optionを含めて説明できるようにする。
+
+### 10.3 確認コマンド
 
 ```bash
 sudo /usr/local/bin/monitoring.sh
 sudo crontab -l
 sudo stat -c '%A %U:%G %n' /usr/local/bin/monitoring.sh
+systemctl is-enabled cron
+systemctl is-active cron
 ```
 
-次の12項目が空欄なく表示されることを確認します。
+確認事項:
 
-| 項目                  | 主な取得元                                   |
-| --------------------- | -------------------------------------------- |
-| architecture / kernel | `uname -a`                                 |
-| physical CPU          | `lscpu -p=SOCKET`                          |
-| vCPU                  | `/proc/cpuinfo`の`processor`行数         |
-| RAM                   | `free`                                     |
-| storage               | `df`                                       |
-| CPU usage             | `/proc/stat`の差分                         |
-| last boot             | `uptime -s`                                |
-| LVM                   | `lsblk`                                    |
-| established TCP       | `ss`                                       |
-| logged-in users       | `who`                                      |
-| IPv4 / MAC            | `ip` / sysfs                               |
-| sudo command count    | `/var/log/sudo/sudo.log`の`COMMAND=`件数 |
+- 12項目が空欄やエラーなしで表示される
+- 数値が固定文字列ではなく、取得時点の値である
+- root crontabから10分ごとに実行される
+- VirtualBoxコンソールとSSH端末への`wall`表示を確認できる
+- 再起動後もscript、権限、cron設定が残る
 
-値が空なら取得元コマンドを単体で実行し、ネットワークインターフェース名、journalの有無、ログ形式などVMごとの差を切り分けます。「スクリプトを変更せず監視を停止」と求められた場合は、スクリプトではなくroot crontabの2行をコメントアウトします。
+### 10.4 レビュー中の変更操作
 
-## 12. signature
-
-signatureはGitのcommit hashではなく、電源停止中の仮想ディスクファイルに対するSHA-1です。VMを起動・変更すると仮想ディスクが変わり得るため、再取得が必要です。
-
-1. VMを完全停止する。
-2. snapshotの有無と、hash対象が実データを保持する正しい仮想ディスクか確認する。
-3. ホスト側で対象ディスクのSHA-1を計算する。
-4. 40桁のhex digestだけを`submit/signature.txt`へ書く。
-5. その後はVMを起動しない。
-
-リポジトリのrootで形式だけを確認するコマンド:
+10分ごとから1分ごとへ変更する場合:
 
 ```bash
-grep -Eq '^[0-9a-fA-F]{40}$' submit/signature.txt
+sudo crontab -e
 ```
 
-## 13. 評価中に設定変更を求められた場合
+```cron
+* * * * * /usr/local/bin/monitoring.sh | /usr/bin/wall
+```
 
-次の順序を守ります。
+script自体を変更せず自動実行を停止する場合は、root crontabの対象行をコメントアウトするか削除する。`monitoring.sh`の内容や実行権限は変更しない。
 
-1. 変更対象と現在値を確認する。
-2. バックアップまたは復旧経路を確保する。
-3. 設定を変更する。
-4. `sshd -t`や`visudo -c`などで構文を検証する。
+---
+
+## 11. 評価で練習しておく操作
+
+### 11.1 ユーザー・グループ
+
+- [ ] 強度規則を満たすpasswordで新規ユーザーを作る
+- [ ] `chage -l`でagingを確認する
+- [ ] `evaluating`グループを作る
+- [ ] 新規ユーザーを`evaluating`へ追加する
+- [ ] `id`と`getent group`で確認する
+
+### 11.2 hostname
+
+- [ ] hostnameを指定された名前へ変更する
+- [ ] `/etc/hosts`も整合させる
+- [ ] 再起動後に変更が維持されることを確認する
+- [ ] 指示された場合は`mhashimo42`へ戻す
+
+### 11.3 UFW
+
+- [ ] 一時的なTCPポートを許可する
+- [ ] numbered listで追加を確認する
+- [ ] 正しい番号のルールを削除する
+- [ ] 4242/tcpだけに戻ったことを確認する
+
+### 11.4 SSH
+
+- [ ] 4242で一般ユーザーとして接続する
+- [ ] 新規ユーザーで接続する
+- [ ] root接続が拒否されることを示す
+- [ ] `sshd -t`、`sshd -T`、`ss -lntp`の違いを説明する
+
+### 11.5 sudo
+
+- [ ] sudoersの構文を検証する
+- [ ] sudo commandを実行する
+- [ ] ログが更新されたことを確認する
+- [ ] 3回の認証失敗制限と独自メッセージを説明する
+
+### 11.6 monitoring
+
+- [ ] scriptを手動実行する
+- [ ] 各出力の取得元を説明する
+- [ ] 実行間隔を1分へ変更する
+- [ ] scriptを編集せず、自動実行を停止する
+- [ ] 必要なら10分設定へ戻す
+
+---
+
+## 12. 設定変更時の安全な手順
+
+1. 現在の設定とサービス状態を確認する。
+2. VMコンソールなどの復旧経路を確保する。
+3. 専用ツールで編集する。sudoersなら`visudo`を使う。
+4. `sshd -t`や`visudo -c`で構文を検証する。
 5. 必要なサービスだけreloadまたはrestartする。
-6. 別端末から期待する動作を確認する。
+6. 表示上の設定値だけでなく、実際の動作を確認する。
+7. ネットワークや認証の変更では、新しい接続が成功するまで既存SSH接続を閉じない。
 
-ネットワークや認証の変更中は、既存SSHセッションとVMコンソールを最後まで残します。
+---
 
-## 14. 最終セルフテスト
+## 13. 最終セルフチェック
 
-資料を見ずに次を説明できれば準備完了です。
+資料を見ずに次を説明できれば、レビュー準備は概ね完了である。
 
-- LUKS、PV、VG、LV、filesystemの関係
-- 実VMに存在するLVと、存在しない個別LV
-- `sshd -t`と`sshd -T`の違い
-- UFWを有効にする安全な順序
-- `/etc/login.defs`と`chage`の違い
-- PAMと`pwquality.conf`の関係
-- `visudo`を使う理由
-- cronの5フィールド、`*/10`、`@reboot`
-- `monitoring.sh`の12項目と取得元
-- `wall`が表示する端末
-- AppArmorとSELinux、UFWの役割の違い
-- signatureをVM停止後に取得する理由
+- [ ] VM、ホスト、ゲスト、ハイパーバイザーの関係
+- [ ] Debianを選んだ理由とRocky Linuxとの違い
+- [ ] `apt`と`aptitude`の違い
+- [ ] AppArmorとUFWの役割の違い
+- [ ] LUKS、PV、VG、LV、filesystemの関係
+- [ ] 実VMにあるroot、home、swapのLV構成
+- [ ] `/etc/login.defs`、`chage`、PAMの役割の違い
+- [ ] `sudo`、`su`、`su -`の違い
+- [ ] `visudo`を使う理由
+- [ ] SSHを4242で提供し、root loginを禁止する理由
+- [ ] UFWで4242/tcpだけを許可する理由
+- [ ] cronの5フィールド、`*/10`、`@reboot`の意味
+- [ ] monitoring scriptの12項目と取得元
+- [ ] scriptを変更せず自動実行を停止する方法
+- [ ] VM停止後にSHA-1を取得する理由
 
-最後に、VM上の実際の出力と、このガイドの「最初に把握する実VMの状態」が一致することを確認してください。
+最後に、VM上の実際の出力と「0. このVMの構成」が一致していることを確認する。レビュー資料より実VMの状態を優先し、相違があればレビュー前に資料またはVMを修正する。

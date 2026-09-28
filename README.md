@@ -10,6 +10,8 @@ Born2BeRoot/
 ├── README.md
 ├── DESIGN.md
 ├── Born2beRoot.pdf
+├── quiz.md
+├── answer.md
 ├── docs/
 │   └── REVIEW_GUIDE.md
 ├── scripts/
