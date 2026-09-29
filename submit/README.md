@@ -84,22 +84,31 @@ VirtualBoxは複数のホストOSに対応した仮想化ソフトウェアで�
 
 以下はDebian用で、**ホスト側**と明記したもの以外はVM内の一般ユーザーから実行します。コードブロックは項目ごとに使い、再起動・対話編集・SSH接続を含む全体を一括実行しないでください。パスワードはプロンプトで入力します。
 
+各コードブロック直前の **「評価票対応」** は、そのコマンド群で確認する評価票の文章を引用または要約したものです。コード内のコメントは、直後のコマンドが何を確認・変更するかを示します。評価ではコマンドを一括貼り付けせず、コメントと実際の出力を対応させながら1項目ずつ実行します。
+
 評価順：署名と起動 → README・概要 → 基本設定 → ユーザー → ホスト名・LVM → sudo → UFW → SSH → 監視 → ボーナス。
 
 ### 0. 起動前：正式な提出物・署名・スナップショット
 
 本人立ち会いのもと、学生の端末で正式な提出リポジトリを空のディレクトリへクローンします。ホスト側でエイリアス・関数やGitの設定を確認し、補助スクリプトを使う場合は内容を一緒に読みます。
 
+**評価票対応：**「学生の端末上で正式なGitリポジトリを空のフォルダへcloneする」「悪意のあるaliasに注意する」「補助スクリプトは学生と一緒に確認する」「ルートに提出物がある」を確認するコマンドです。
+
 ```sh
 # ホスト側。URLを正式な提出先に置き換える。
+# 使用されるgit・shasum・diffが想定した実体か確認する。
 type -a git shasum diff
+# シェルaliasとGit aliasにコマンドのすり替えがないか確認する。
 alias
 git config --show-origin --get-regexp '^alias\.'
+# 空の新規ディレクトリ名へ正式リポジトリをcloneする。
 git clone 'OFFICIAL_REPOSITORY_URL' born2beroot-evaluation
 cd born2beroot-evaluation
+# 正式なremote、追跡ファイル、ルートの実ファイルを確認する。
 git remote -v
 git ls-files
 ls -la
+# READMEの必須先頭行とsignature.txtの存在・内容を確認する。
 head -n 1 README.md
 cat signature.txt
 ```
@@ -108,20 +117,128 @@ cat signature.txt
 
 これは、正式な提出物だけを評価し、aliasや未確認スクリプトによる表示・コマンドのすり替えを避けるためです。Gitで追跡する課題提出ファイルは `README.md` と `signature.txt` で、VDIそのものはGitへ含めません。提出物欠落、ファイル名違い、署名不一致、起動不能など評価票の終了条件に該当した場合は、その場で取り繕わず評価を終了します。
 
-**ここではVMを起動しません。** VirtualBoxの画面で「電源オフ」（保存状態ではない）とスナップショットなしを確認し、接続されているディスクの実パスを調べます。ホスト側で、そのパスに置き換えて比較します。
+#### 0-1. VM名・停止状態・スナップショットの確認
+
+**ここではまだVMを起動しません。** VirtualBox Managerを開き、左側で評価対象VMを選びます。VM名の下の状態が「電源オフ（Powered Off）」であることを確認します。「実行中（Running）」や「保存（Saved）」なら評価を開始しません。対象VMのメニューから「スナップショット（Snapshots）」を開き、名前付きスナップショットがなく、`Current State` だけであることを確認します。
+
+同じ状態はホスト側のCLIでも確認できます。`VM_NAME` は `VBoxManage list vms` に表示された正確な名前へ置き換えます。
+
+**評価票対応：**「スナップショットが存在しない」「評価開始前から動いているVMは受け入れない」を、起動前に確認するコマンドです。
 
 ```sh
-VM_DISK='/sgoinfre/mhashimo/Born2BeRoot-x86/Born2BeRoot-amd64/Born2BeRoot-amd64.vdi'
-ACTUAL_SIGNATURE=$(mktemp)
-shasum -a 1 "$VM_DISK" | awk '{print $1}' > "$ACTUAL_SIGNATURE"
-diff -u signature.txt "$ACTUAL_SIGNATURE"
+# ホスト側。まだstartvmは実行しない。
+# 登録VMから評価対象の正確な名前を特定する。
+VBoxManage list vms
+VM_NAME='Born2BeRoot-amd64'
+# 対象VMが既に実行中でないことを確認する。
+VBoxManage list runningvms
+# 保存状態ではなくVMState="poweroff"であることを確認する。
+VBoxManage showvminfo "$VM_NAME" --machinereadable | grep -E '^(name|VMState|CfgFile|SnapFldr)='
+# 名前付きスナップショットがないことを確認する。
+VBoxManage snapshot "$VM_NAME" list
 ```
 
-期待結果は `diff` の出力なし・終了値0です。不一致なら評価を止め、提出署名を書き換えてその場の照合を通すことはしません。
+期待結果は、対象VMが `list runningvms` に現れず、`VMState="poweroff"` であることです。`snapshot list` はスナップショットがない旨を表示し、名前付きスナップショットを列挙しません。この条件を確認する前から動いていたVMや、保存状態のVMは受け入れません。
 
-照合後、停止中の評価用スナップショットを作るか、ディスクを別ディレクトリへ複製してコピーから起動します。コピー方式ではVMがコピーを参照していることを確認します。原本を保護してから起動し、LUKSを解除して `mhashimo` でログインします。評価前から動いていたVMは受け入れないという評価票の条件に従います。
+#### 0-2. 接続ディスクと署名の確認
 
-署名はGitのコミットIDではなく、完全停止した仮想ディスク全体のSHA-1です。VMを起動するだけでもログ等がディスクへ書かれて値が変わり得ます。評価開始時にスナップショットがあってはいけませんが、照合後に評価専用のコールドスナップショットを作ることは認められています。終了時は評価前へ復元してからそのスナップショットを削除し、変更を原本へマージしないようにします。
+VirtualBox Managerで対象VMの「設定（Settings）」→「ストレージ（Storage）」を開き、ストレージコントローラー配下の仮想ハードディスクを選択します。右側に表示される場所が、署名対象の `Born2BeRoot-amd64.vdi` であることを確認します。CLIでは次の出力の「Storage」欄でも、接続中のディスクの絶対パスを確認できます。
+
+**評価票対応：**「必要なら `.vdi` の場所を学生に尋ねる」「VirtualBoxのディスクは `.vdi`」に対し、実際にVMへ接続されている署名対象ディスクを特定するコマンドです。
+
+```sh
+# ホスト側。
+# Storage欄で接続されたVDIの絶対パスを確認する。
+VBoxManage showvminfo "$VM_NAME"
+```
+
+このVMはVirtualBoxを使うためディスク拡張子は `.vdi` です。UTMを使った構成では通常 `.qcow2` などになり、その場合はUTMで接続先を確認して実際のディスクファイルをSHA-1の対象にします。VirtualBox用の以下のパスは使いません。
+
+クローンした提出リポジトリのルートで、VirtualBoxに表示された実パスを `VM_DISK` に設定して比較します。
+
+**評価票対応：**「`signature.txt` 内の署名と `.vdi` の署名が一致することを、単純な `diff` で確認する」を実行するコマンドです。
+
+```sh
+# ホスト側。VMは電源オフのまま実行する。
+VM_DISK='/sgoinfre/mhashimo/Born2BeRoot-x86/Born2BeRoot-amd64/Born2BeRoot-amd64.vdi'
+# 指定先が実在するVDIであることを確認する。
+test -f "$VM_DISK"
+test "${VM_DISK##*.}" = 'vdi'
+# 提出署名がSHA-1の40桁形式であることを確認する。
+grep -Eq '^[0-9a-fA-F]{40}$' signature.txt
+# 停止中VDIからSHA-1だけを一時ファイルへ保存する。
+ACTUAL_SIGNATURE=$(mktemp)
+shasum -a 1 "$VM_DISK" | awk '{print $1}' > "$ACTUAL_SIGNATURE"
+# 提出値と実測値を比較する。出力なし・終了値0が合格。
+diff -u signature.txt "$ACTUAL_SIGNATURE"
+DIFF_STATUS=$?
+# 一時ファイルを削除し、diffの終了値を最終結果にする。
+rm "$ACTUAL_SIGNATURE"
+test "$DIFF_STATUS" -eq 0
+```
+
+期待結果は `diff` の出力なし・終了値0です。署名はGitのコミットIDではなく、完全停止した仮想ディスク全体のSHA-1です。VMを起動するだけでもログ等が書き込まれて署名が変わり得ます。不一致なら評価を止め、提出署名を書き換えてその場の照合を通すことはしません。
+
+#### 0-3. 原本を保護する方法を1つ選ぶ
+
+署名一致と「スナップショットなし」を確認した**後**、次のAかBのどちらか一方を実施します。両方を同時に行う必要はありません。このVMではAの評価専用コールドスナップショットを基本とします。
+
+##### A. 評価専用コールドスナップショット
+
+VirtualBox Managerで、電源オフの対象VMの「スナップショット」を開きます。`Current State` を選択して「作成（Take）」を押し、名前を `b2br-evaluation`、説明を「署名照合後・起動前の評価専用」として作成します。作成後、一覧に `b2br-evaluation` と、その下に `Current State` があることを確認します。
+
+CLIで行う場合は次のとおりです。実行中に作るlive snapshotではなく、`VMState="poweroff"` を確認した後に作成します。
+
+**評価票対応：**「VMを起動する前にコールドスナップショットを作る」を実施し、作成結果を一覧で確認するコマンドです。
+
+```sh
+# ホスト側。
+EVAL_SNAPSHOT='b2br-evaluation'
+# 電源オフ状態から評価専用スナップショットを作る。
+VBoxManage snapshot "$VM_NAME" take "$EVAL_SNAPSHOT" --description='署名照合後・起動前の評価専用'
+# 作成したスナップショット名と状態を確認する。
+VBoxManage snapshot "$VM_NAME" list --details
+```
+
+スナップショット作成後の書き込みは差分ディスクへ行われます。評価終了時は後述の手順でこの時点へ復元し、評価専用スナップショットを削除します。
+
+##### B. 独立したフルクローン
+
+VirtualBox Managerで対象VMを右クリックして「クローン（Clone）」を選びます。名前を `Born2BeRoot-amd64-evaluation`、保存先を原本とは別の評価用ディレクトリにし、「Full Clone」と「Current Machine State」を選んで作成します。作成後、クローン側の「設定」→「ストレージ」で、原本のVDIではなく評価用ディレクトリ内の複製VDIを参照していることを確認します。
+
+CLIで同じ操作を行う例です。`EVAL_BASE` は十分な空き容量がある、原本とは別の評価専用ディレクトリにします。
+
+**評価票対応：** コールドスナップショットを使わない場合の「仮想ディスクを別ディレクトリへ複製し、そのコピーから起動する」を実施・確認する代替コマンドです。
+
+```sh
+# ホスト側。
+EVAL_VM_NAME='Born2BeRoot-amd64-evaluation'
+EVAL_BASE='/sgoinfre/mhashimo/Born2BeRoot-x86/evaluation-copy'
+# 原本とは別の評価用保存先を用意する。
+mkdir -p "$EVAL_BASE"
+# 現在の停止中VMを独立したFull Cloneとして複製・登録する。
+VBoxManage clonevm "$VM_NAME" --name="$EVAL_VM_NAME" --basefolder="$EVAL_BASE" --mode=machine --register
+# クローンが評価用ディレクトリ内の複製VDIを参照することを確認する。
+VBoxManage showvminfo "$EVAL_VM_NAME"
+```
+
+出力の仮想ディスクが `EVAL_BASE` 配下にあり、原本の `VM_DISK` ではないことを確認します。以降は元のVMではなく `EVAL_VM_NAME` だけを起動します。
+
+#### 0-4. 保護した評価用VMを起動する
+
+AならVirtualBox Managerで元のVMを、Bなら作成した評価用クローンを選び、「起動（Start）」を押します。CLIなら、選択した方法に対応する片方だけを実行します。
+
+**評価票対応：**「評価するVMを起動する」を、原本保護が完了した後に実施するコマンドです。
+
+```sh
+# A：評価専用スナップショット方式
+VBoxManage startvm "$VM_NAME" --type=gui
+
+# B：フルクローン方式。Aと同時には実行しない。
+VBoxManage startvm "$EVAL_VM_NAME" --type=gui
+```
+
+起動画面でLUKSパスフレーズを入力して暗号化領域を解除し、ログイン画面でrootではなく `mhashimo` と課題要件を満たすパスワードを使います。ここから先は評価用の状態だけを変更し、原本VDIを直接起動・接続し直しません。
 
 ### 1. READMEと概要の説明
 
@@ -129,18 +246,28 @@ diff -u signature.txt "$ACTUAL_SIGNATURE"
 
 ### 2. 基本設定・サービス
 
+**評価票対応：**「GUIがない」「rootではないユーザーでログイン」「UFWとSSHが起動」「OSがDebianまたはRocky」「AppArmorが起動」をまとめて確認するコマンドです。
+
 ```sh
+# 「rootではないユーザーでログイン」を確認する。
 whoami
 id
+# 「選んだOSがDebianまたはRocky」を確認する。
 cat /etc/os-release
 uname -m
+# login42形式のホスト名も同時に確認する。
 hostnamectl
+# 「グラフィカル環境がない」を起動ターゲット・サービス・パッケージから確認する。
 systemctl get-default
 systemctl status display-manager --no-pager
+# 「UFW・SSH・AppArmorが起動時から有効で、現在も動作」を確認する。cronは監視項目用。
 systemctl is-enabled apparmor ssh ufw cron
 systemctl is-active apparmor ssh ufw cron
+# AppArmorの読込済みプロファイルとモードを確認する。
 sudo aa-status
+# UFWがactiveであることを確認する。
 sudo ufw status verbose
+# 禁止されたX.org・Waylandや主要desktop環境の候補を抽出する。
 dpkg-query -W -f='${binary:Package}\t${db:Status-Status}\n' | grep -Ei 'xserver|xorg|wayland|gdm|lightdm|sddm|task-.*desktop|gnome-shell|plasma-desktop'
 ```
 
@@ -152,23 +279,36 @@ dpkg-query -W -f='${binary:Package}\t${db:Status-Status}\n' | grep -Ei 'xserver|
 
 この後の評価では一貫して `reviewer42` を新規ユーザーの例として使います。既に存在する場合は別の未使用名に読み替えてください。削除は全実演が終わるまで行いません。
 
+**評価票対応：**「学生のログイン名と同じユーザーが存在し、`sudo`と`user42`に所属」「評価者が選んだパスワードで新しいユーザーを作成」を確認するコマンドです。
+
 ```sh
+# 既存の学生ユーザーと所属グループを確認する。
 id mhashimo
 getent group sudo
 getent group user42
+# 評価用ユーザー名が未使用であることを確認する。
 getent passwd reviewer42
+# 課題の規則を満たすパスワードを対話入力してユーザーを作る。
 sudo adduser reviewer42
+# 新規ユーザーへ30日・2日・7日の期限設定が反映されたか確認する。
 sudo chage -l reviewer42
 ```
 
 `mhashimo` はsudo/user42の両方に所属すること、新規ユーザーのパスワード設定で要件を満たす候補が受理されることを確認します。作成前の `getent passwd reviewer42` は未使用なら出力なしです。
 
+**評価票対応：**「要求されたパスワード規則をVM上でどのように設定したか説明する」に対し、期限とPAM品質設定の根拠ファイルを表示するコマンドです。
+
 ```sh
+# 新規アカウントに使う期限の既定値30/2/7を確認する。
 grep -E '^(PASS_MAX_DAYS|PASS_MIN_DAYS|PASS_WARN_AGE)' /etc/login.defs
+# 既存の学生ユーザーとrootにも期限が個別適用済みか確認する。
 sudo chage -l mhashimo
 sudo chage -l root
+# pam_pwqualityがパスワード変更処理に組み込まれているか確認する。
 sudo cat /etc/pam.d/common-password
+# 長さ・文字種・連続文字・ユーザー名・旧新差分・root強制の値を確認する。
 sudo cat /etc/security/pwquality.conf
+# 追加ファイルによる設定の上書きがないか確認する。
 sudo find /etc/security/pwquality.conf.d -maxdepth 1 -type f -exec cat {} \;
 ```
 
@@ -190,10 +330,16 @@ sudo find /etc/security/pwquality.conf.d -maxdepth 1 -type f -exec cat {} \;
 
 ### 4. User step 2：evaluatingグループ
 
+**評価票対応：**「目の前で`evaluating`グループを作り、新規ユーザーを所属させ、最後に所属を確認する」をその順に実演するコマンドです。
+
 ```sh
+# 同名グループがまだ存在しないことを確認する。
 getent group evaluating
+# evaluatingを作成する。
 sudo groupadd evaluating
+# 既存の補助グループを保持したまま新規ユーザーを追加する。
 sudo usermod -aG evaluating reviewer42
+# ユーザー側・グループ側の両方から所属を確認する。
 id reviewer42
 getent group evaluating
 ```
@@ -206,15 +352,23 @@ getent group evaluating
 
 `EVALUATOR_LOGIN42` を評価者のログイン名に `42` を付けた値へ置き換えます。
 
+**評価票対応：**「ホスト名がlogin42形式」「ログイン名部分を評価者のログイン名へ変更する」を実行し、関連ファイルも確認するコマンドです。
+
 ```sh
+# 現在のhostnameがmhashimo42であることを確認する。
 hostnamectl --static
 cat /etc/hostname
+# ローカル名前解決に記録された旧hostnameを確認する。
 cat /etc/hosts
+# 評価者ログイン名+42へ永続hostnameを変更する。
 sudo hostnamectl set-hostname EVALUATOR_LOGIN42
+# /etc/hostsの対応する旧名も新名へ変更する。
 sudoedit /etc/hosts
 ```
 
 `/etc/hosts` の `127.0.1.1` などにある `mhashimo42` を新名に合わせ、localhostの行は保持します。その後、再起動します。
+
+**評価票対応：**「ホスト名を変更し、再起動後に変更が反映される」を確認するための再起動です。
 
 ```sh
 sudo reboot
@@ -222,22 +376,32 @@ sudo reboot
 
 コンソールでLUKSを解除し、再ログインして永続化を確認します。
 
+**評価票対応：**「再起動後にホスト名変更が反映されている」を確認し、評価後の作業を続けるため元のホスト名へ戻すコマンドです。
+
 ```sh
+# 再起動後も評価者名+42が保持されていることを確認する。
 hostnamectl --static
 cat /etc/hostname
 cat /etc/hosts
+# 元の提出状態mhashimo42へ戻す。
 sudo hostnamectl set-hostname mhashimo42
+# /etc/hostsもmhashimo42へ戻す。
 sudoedit /etc/hosts
 ```
 
 `/etc/hosts` の名前も `mhashimo42` に戻します。シェルプロンプトは古い名前のままの場合があるため、確認は `hostnamectl` で行います。
 
+**評価票対応：**「VMのパーティションを表示」「課題図と比較」「LVMとは何か、どう動くか説明する」ため、暗号化・PV・VG・LV・マウント・swapを表示するコマンドです。
+
 ```sh
+# ディスク階層とLUKS・LVM・ファイルシステムを確認する。
 lsblk
 lsblk -f
+# LVMのPV→VG→LV構造を個別に確認する。
 sudo pvs
 sudo vgs
 sudo lvs
+# rootとhomeの実マウント先、swapの利用を確認する。
 findmnt /
 findmnt /home
 swapon --show
@@ -251,13 +415,21 @@ LUKSはディスク上のデータを暗号化し、LVMは容量を論理的に�
 
 ### 6. SUDO：所属追加・設定・ログ更新
 
+**評価票対応：**「sudoがインストール済み」「新規ユーザーをsudoグループへ追加」「厳密なルールを示す」「`/var/log/sudo/`にファイルがある」を確認するコマンドです。
+
 ```sh
+# sudoパッケージが正しくインストールされているか確認する。
 dpkg-query -W sudo
+# 評価用ユーザーをsudoグループへ追加し、所属を確認する。
 sudo usermod -aG sudo reviewer42
 id reviewer42
+# sudoers全体の構文が正常か確認する。
 sudo visudo -c
+# 課題用の厳密設定を表示して各ルールを説明する。
 sudo cat /etc/sudoers.d/born2beroot
+# 現在のユーザーに許可されたsudo操作を確認する。
 sudo -l
+# 指定ログディレクトリと、その中のイベント/I/Oログを確認する。
 sudo ls -ld /var/log/sudo
 sudo find /var/log/sudo -type f -print
 ```
@@ -278,14 +450,22 @@ sudoは、sudoersで許可されたユーザーが別ユーザー（通常root�
 
 設定編集に `visudo` を使うのは、保存前後に構文を検査してsudo全体を壊す危険を減らすためです。イベントログとI/Oログは別物で、後者は `sudoreplay` で一覧・再生します。
 
+**評価票対応：**「sudoログの内容に実行履歴が見える」「sudoでコマンドを実行するとログが更新される」を前後比較するコマンドです。
+
 ```sh
+# 実行前のイベントログ末尾を確認する。
 sudo tail -n 10 /var/log/sudo/sudo.log
+# sudo経由で確認用コマンドを1回実行する。
 sudo /usr/bin/id
+# COMMAND=/usr/bin/idが追加されたことを確認する。
 sudo tail -n 10 /var/log/sudo/sudo.log
+# 入出力ログのセッション一覧を確認する。
 sudo sudoreplay -d /var/log/sudo -l
 ```
 
 `id` の結果がrootで、ログに `COMMAND=/usr/bin/id` が追加されていることを確認します。I/Oログの実パスが下位ディレクトリなら、`sudoreplay -d` のパスを `iolog_dir` の値に合わせます。一覧にあるIDを指定して再生します。
+
+**評価票対応：** sudoの「入力と出力も記録する」設定が実データとして再生できることを確認するコマンドです。
 
 ```sh
 # IDは一覧にある値へ置き換える。
@@ -294,8 +474,12 @@ sudo sudoreplay -d /var/log/sudo SESSION_ID
 
 3回制限と独自メッセージの確認では、次を実行して意図的に3回誤入力し、実行されず終了することを確認します。認証キャッシュを無効にする `sudo -k` が必要です。
 
+**評価票対応：** sudoの「誤ったパスワードは3回まで」「独自エラーメッセージ」を動作で確認するコマンドです。
+
 ```sh
+# 既存の認証キャッシュを破棄する。
 sudo -k
+# 意図的に3回誤入力し、独自メッセージと実行拒否を確認する。
 sudo /usr/bin/true
 ```
 
@@ -303,14 +487,20 @@ sudo /usr/bin/true
 
 UFWは、Linuxカーネルのパケットフィルタへ許可・拒否ルールを設定するための管理ツールです。このVMでは不要な外部到達性を減らすため、受信を既定で拒否し、SSHに必要な4242/TCPだけを許可します。firewalldは同じ目的に使えますが、ゾーンやサービス単位で方針を管理する点が特徴です。ポートを許可することと、そのポートでサービスを起動することは別なので、8080の評価ではサーバーを起動する必要はありません。
 
+**評価票対応：**「UFWがインストールされ正常動作」「有効なルールに4242」「8080を追加して一覧確認し、最後に削除」を順番に実演するコマンドです。
+
 ```sh
+# UFWのインストール、起動時有効化、現在の動作を確認する。
 dpkg-query -W ufw
 systemctl is-enabled ufw
 systemctl is-active ufw
+# 既定方針と4242/TCPだけが許可されていることを確認する。
 sudo ufw status verbose
 sudo ufw status numbered
+# 評価用に8080/TCPを追加し、一覧で増えたことを確認する。
 sudo ufw allow 8080/tcp
 sudo ufw status numbered
+# 評価用8080ルールを削除し、4242だけへ戻ったことを確認する。
 sudo ufw delete allow 8080/tcp
 sudo ufw status numbered
 ```
@@ -321,12 +511,18 @@ sudo ufw status numbered
 
 SSHは、暗号化した通信路でサーバーを認証し、さらに鍵またはパスワードでユーザーを認証して、遠隔からシェルを操作する仕組みです。平文の遠隔操作と異なり、認証情報と通信内容を保護できることが利点です。rootの直接ログインを禁止すると、まず個人を識別できる一般ユーザーで入り、必要な操作だけsudoで昇格するため、総当たり対象と無記名の特権操作を減らせます。4242へ変えることだけは強い認証の代わりになりません。
 
+**評価票対応：**「SSHがインストールされ正常動作」「VM内で4242番ポートだけを使用」「root接続禁止」の設定と実待受を確認するコマンドです。
+
 ```sh
+# OpenSSH serverのインストール、起動時有効化、現在の動作を確認する。
 dpkg-query -W openssh-server
 systemctl is-enabled ssh
 systemctl is-active ssh
+# sshd設定の構文が正常か確認する。
 sudo /usr/sbin/sshd -t
+# 実効設定がport 4242、permitrootlogin noか確認する。
 sudo /usr/sbin/sshd -T | grep -E '^(port|permitrootlogin|passwordauthentication|pubkeyauthentication) '
+# sshdが実際に4242だけで待ち受けているか確認する。
 sudo ss -ltnp
 ```
 
@@ -336,20 +532,28 @@ sudo ss -ltnp
 
 **学内ホストの別端末**から接続します。以下はNATでホスト4242→VM4242を転送している場合です。ブリッジ等の場合は `localhost` をVMのIPに置き換えます。
 
+**評価票対応：**「新しく作ったユーザーでSSHログインする」をホスト側から確認するコマンドです。
+
 ```sh
 ssh -p 4242 reviewer42@localhost
 ```
 
 新規ユーザーのセッション内で確認します。
 
+**評価票対応：** 接続成功が別ユーザーや既存セッションではなく、新規ユーザー自身のSSHセッションであることを確認するコマンドです。
+
 ```sh
+# reviewer42として接続できたことと、追加済みグループを確認する。
 whoami
 id
+# sudo項目で追加した権限が新しいログインセッションへ反映されたか確認する。
 sudo -l
 exit
 ```
 
 再びホストからroot接続を試し、拒否を確認します。
+
+**評価票対応：**「rootユーザーではSSH接続できない」を、一般ユーザー成功後に同じ接続先で確認するコマンドです。
 
 ```sh
 ssh -p 4242 root@localhost
@@ -363,19 +567,30 @@ VirtualBoxのNATを使う場合、ホスト側ポートとゲスト側ポート�
 
 `monitoring.sh` は情報を取得・計算して標準出力へ書くBashスクリプトです。全端末への配信はスクリプト自身ではなく、rootのcron行にあるパイプの右側の `wall` が担当します。この分離により、スクリプト単体の出力確認と定期配信を別々に検証できます。cronは指定時刻にコマンドを実行するデーモンで、rootのユーザーcrontabを使うため、5つの時刻欄の後に実行ユーザー欄は書きません。
 
+**評価票対応：**「コードを見せながらスクリプトの動作を説明」「cronとは何か」「起動時から10分ごとの設定」を、コード・単体実行・crontab・サービス状態から確認するコマンドです。
+
 ```sh
+# 評価対象の実コードを表示し、各取得・計算処理を説明する。
 sudo cat /usr/local/bin/monitoring.sh
+# スクリプトの所有者・権限を記録する。
 sudo stat -c '%a %U:%G %n' /usr/local/bin/monitoring.sh
+# cronを待たず単体実行し、全項目がエラーなしで出るか確認する。
 sudo /usr/local/bin/monitoring.sh
+# @rebootと10分周期、wallへのパイプを確認する。
 sudo crontab -l
+# cronが起動時から有効で現在も動作中か確認する。
 systemctl is-enabled cron
 systemctl is-active cron
 ```
 
 rootのcrontabの通常設定は次の2行です。
 
+**評価票対応：**「サーバー起動時から10分ごとに全端末へ表示する」ための通常設定です。
+
 ```cron
+# cron起動時に1回実行し、wallで全端末へ配信する。
 @reboot /usr/local/bin/monitoring.sh | /usr/bin/wall
+# 毎時00・10・20・30・40・50分に実行して配信する。
 */10 * * * * /usr/local/bin/monitoring.sh | /usr/bin/wall
 ```
 
@@ -408,10 +623,16 @@ rootのcrontabの通常設定は次の2行です。
 
 コンソールとSSH端末を開いたまま、配信先とエラーの有無を確認します。
 
+**評価票対応：**「起動時および10分ごとに、すべての端末へエラーなしで表示される」を、ログイン端末・書込許可・手動wall・cron履歴から確認するコマンドです。
+
 ```sh
+# 現在ログイン中で配信対象となる端末を確認する。
 who
+# 現端末がwallメッセージを受信可能か確認する。
 mesg
+# cronと同じパイプを手動実行し、全端末への実表示を確認する。
 sudo /usr/local/bin/monitoring.sh | sudo /usr/bin/wall
+# 直近のcron実行履歴にエラーがないか確認する。
 sudo journalctl -u cron --since '15 minutes ago' --no-pager
 ```
 
@@ -421,18 +642,29 @@ sudo journalctl -u cron --since '15 minutes ago' --no-pager
 
 まずrootのcrontabと、スクリプトのハッシュ・所有者・権限を保存します。保存先が既にある場合は別名にし、同じ実演中はその名前を使ってください。
 
+**評価票対応：** 後で「スクリプトそのものを変更せず停止した」と証明できるよう、毎分化の前にcrontab、内容、所有者、権限の基準値を保存するコマンドです。
+
 ```sh
+# 通常のroot crontabを復元用に保存する。
 sudo sh -c 'crontab -l > /root/b2br-review-crontab.before'
+# スクリプト内容のSHA-256を保存する。
 sudo sh -c 'sha256sum /usr/local/bin/monitoring.sh > /root/b2br-monitoring.sha256'
+# 所有者・グループ・権限・パスを保存する。
 sudo sh -c 'stat -c "%a %U:%G %n" /usr/local/bin/monitoring.sh > /root/b2br-monitoring.stat'
+# rootのcrontabだけを編集する。
 sudo crontab -e
 ```
 
 `*/10` の行を次に置き換えます。元の10分行を重複して残さないでください。
 
+**評価票対応：**「正しく動作したら毎分実行へ変更する」で使用するcron行です。
+
 ```cron
+# 1分ごとに実行し、wallで全端末へ配信する。
 * * * * * /usr/local/bin/monitoring.sh | /usr/bin/wall
 ```
+
+**評価票対応：** 10分行が消え、毎分行が1つだけになったことを確認するコマンドです。
 
 ```sh
 sudo crontab -l
@@ -440,23 +672,37 @@ sudo crontab -l
 
 分の境界を2回以上またいで通知時刻と値の変化を確認します。次に `sudo crontab -e` で、起動時と毎分の**両方**をコメントアウトします。他の場所にも監視の登録があれば確認してください。
 
+**評価票対応：**「スクリプトそのものを変更せず、サーバー起動後に実行されないようにする」ため、スケジュールだけを無効化する設定です。
+
 ```cron
+# 起動時実行を無効化する。
 # @reboot /usr/local/bin/monitoring.sh | /usr/bin/wall
+# 毎分実行も無効化する。
 # * * * * * /usr/local/bin/monitoring.sh | /usr/bin/wall
 ```
 
+**評価票対応：** 無効化されたcrontabを表示したうえで、「確認のためもう一度サーバーを再起動する」を実行します。
+
 ```sh
+# 両方がコメント化されていることを確認する。
 sudo crontab -l
+# 停止状態が起動後も続くか確認するため再起動する。
 sudo reboot
 ```
 
 LUKS解除・ログイン後、同じパスにファイルがあり、ハッシュ・権限・所有者が変わっていないことを確認します。
 
+**評価票対応：** 再起動後に「スクリプトが同じ場所に存在し、権限と内容が変わらず、実行されない」を確認するコマンドです。
+
 ```sh
+# 内容が保存前のSHA-256と一致するか確認する。
 sudo sha256sum -c /root/b2br-monitoring.sha256
+# 再起動後の所有者・権限を取得し、保存前と比較する。
 sudo sh -c 'stat -c "%a %U:%G %n" /usr/local/bin/monitoring.sh > /root/b2br-monitoring.after.stat'
 sudo diff -u /root/b2br-monitoring.stat /root/b2br-monitoring.after.stat
+# スケジュールが無効のままか確認する。
 sudo crontab -l
+# 今回の起動後に監視ジョブの実行記録がないか確認する。
 sudo journalctl -u cron -b --no-pager
 ```
 
@@ -472,22 +718,116 @@ sudo journalctl -u cron -b --no-pager
 
 停止確認を終えてから、評価用の変更を戻します。原本を保護したコピーを破棄する場合は、コピー内の変更を原本に反映する必要はありません。作業VMを再利用する場合の復元例です。
 
+**評価票対応：** 評価中に求められた一時変更を通常設定へ戻し、4242以外の不要なUFWルールが残っていないことを確認する終了処理です。
+
 ```sh
+# 監視を通常の@reboot・10分周期へ戻す。
 sudo crontab /root/b2br-review-crontab.before
 sudo crontab -l
+# hostnameが元のmhashimo42か確認する。
 hostnamectl --static
+# 8080等の評価用ルールが消え、4242だけか確認する。
 sudo ufw status numbered
 ```
 
 評価用ユーザーのSSHセッションを終了後、**この評価で作成したユーザーとグループであることを確認して**削除します。
 
+**評価票対応：** 評価票で作成した一時ユーザー・グループを作業VMから除去し、スナップショット復元またはクローン削除を安全に行える電源オフ状態へ移る終了処理です。
+
 ```sh
+# この評価で作成したreviewer42とホームだけを削除する。
 sudo deluser --remove-home reviewer42
+# この評価で作成したevaluatingだけを削除する。
 sudo groupdel evaluating
+# ファイルシステムを正常終了させてVMを完全停止する。
 sudo poweroff
 ```
 
-スナップショット方式では、電源オフ後に評価開始前の状態へ復元してから評価用スナップショットを削除します。削除だけで変更をマージしないよう操作を確認し、最後にスナップショットなし・原本のSHA-1が提出値と同じであることを確認してください。
+#### 評価用VMを停止する
+
+`sudo poweroff` 後、VirtualBox Managerで評価に使ったVMの状態が「電源オフ」になるまで待ちます。「閉じる」から「仮想マシンの状態を保存」を選んではいけません。ホスト側でも停止を確認します。
+
+**評価票対応：** 評価用スナップショットを復元・削除、または評価用クローンを削除する前提として、評価用VMが完全停止したことを確認するコマンドです。
+
+```sh
+# ホスト側。Aなら元のVM名を使う。
+ACTIVE_VM_NAME='Born2BeRoot-amd64'
+# Bなら上の代わりに次を使う：ACTIVE_VM_NAME='Born2BeRoot-amd64-evaluation'
+# 評価用VMが実行一覧にないことを確認する。
+VBoxManage list runningvms
+# 保存状態ではなくpoweroffか確認する。
+VBoxManage showvminfo "$ACTIVE_VM_NAME" --machinereadable | grep '^VMState='
+```
+
+Aでは元のVM、Bでは `EVAL_VM_NAME` が `list runningvms` に現れず、`VMState="poweroff"` であることを確認します。
+
+#### Aを選んだ場合：復元して評価専用スナップショットを削除する
+
+VirtualBox Managerの「スナップショット」で `b2br-evaluation` を選び、「復元（Restore）」を押します。現在の評価後状態を保存するか尋ねられた場合は、新しいスナップショットを作成せずに復元します。復元完了後、同じ `b2br-evaluation` を選んで「削除（Delete）」を押し、処理が終わるまでVirtualBoxを終了しません。最後に、名前付きスナップショットがなく `Current State` だけになったことを確認します。
+
+CLIで行う場合は次の順です。
+
+**評価票対応：**「評価開始時に作ったコールドスナップショットを評価終了時に削除する」を、評価中の変更を原本へ残さない順序で実行するコマンドです。
+
+```sh
+# ホスト側。VMがpoweroffであることを先に確認する。
+VM_NAME='Born2BeRoot-amd64'
+EVAL_SNAPSHOT='b2br-evaluation'
+# 先に起動前の状態へ戻し、評価中の差分を破棄する。
+VBoxManage snapshot "$VM_NAME" restore "$EVAL_SNAPSHOT"
+# 復元後に評価専用スナップショットを削除する。
+VBoxManage snapshot "$VM_NAME" delete "$EVAL_SNAPSHOT"
+# 名前付きスナップショットがなくなったことを確認する。
+VBoxManage snapshot "$VM_NAME" list
+```
+
+`restore` で評価中の変更を破棄して署名照合時の状態へ戻してから、`delete` で評価専用スナップショットを除去します。削除処理では差分ディスクの整理に時間がかかる場合があるため、中断しません。
+
+#### Bを選んだ場合：評価用クローンだけを削除する
+
+VirtualBox Managerで、元のVMではなく `Born2BeRoot-amd64-evaluation` を選び、「削除（Remove）」→「すべてのファイルを削除（Delete all files）」を選びます。元の `Born2BeRoot-amd64` や原本VDIを削除対象にしていないことを、確定前に名前とストレージパスで再確認します。
+
+CLIで削除する場合も、まず表示内容で対象が評価用ディレクトリのクローンであることを確認してから、そのVM名だけを削除します。
+
+**評価票対応：**「別ディレクトリへ複製したコピーから起動」を選んだ場合に、原本ではなく評価用コピーだけを確認・削除するコマンドです。
+
+```sh
+# ホスト側。表示された名前とディスクパスを確認してから削除する。
+EVAL_VM_NAME='Born2BeRoot-amd64-evaluation'
+# 削除対象が評価用名・評価用パスであることを最終確認する。
+VBoxManage showvminfo "$EVAL_VM_NAME"
+# 登録と評価用クローンの関連ファイルだけを削除する。
+VBoxManage unregistervm "$EVAL_VM_NAME" --delete
+# 原本VMが登録されたまま、評価用名が消えたことを確認する。
+VBoxManage list vms
+```
+
+#### 原本の最終確認
+
+どちらの方法でも、元のVMが電源オフで、名前付きスナップショットがないことを再確認します。そのうえで、起動前と同じ原本VDIからSHA-1を再計算します。
+
+**評価票対応：** 次回評価に向けて「原本 `.vdi` を変更せず署名を同一に保つ」「スナップショットなし」「VMは電源オフ」へ戻ったことを最終確認するコマンドです。
+
+```sh
+# ホスト側。
+VM_NAME='Born2BeRoot-amd64'
+VM_DISK='/sgoinfre/mhashimo/Born2BeRoot-x86/Born2BeRoot-amd64/Born2BeRoot-amd64.vdi'
+# 原本VMが実行中でないこととpoweroffを確認する。
+VBoxManage list runningvms
+VBoxManage showvminfo "$VM_NAME" --machinereadable | grep '^VMState='
+# 評価専用を含む名前付きスナップショットがないことを確認する。
+VBoxManage snapshot "$VM_NAME" list
+# 原本VDIのSHA-1を再計算して提出署名と比較する。
+POST_SIGNATURE=$(mktemp)
+shasum -a 1 "$VM_DISK" | awk '{print $1}' > "$POST_SIGNATURE"
+diff -u signature.txt "$POST_SIGNATURE"
+DIFF_STATUS=$?
+# 一時ファイルを削除し、diffの終了値を最終結果にする。
+rm "$POST_SIGNATURE"
+test "$DIFF_STATUS" -eq 0
+```
+
+期待結果は、元のVMが `VMState="poweroff"`、名前付きスナップショットなし、`diff` の出力なし・終了値0です。不一致なら `signature.txt` を書き換えず、評価用スナップショットの復元・削除順序、または起動したディスクが原本ではなかったかを確認します。
 
 ### 12. 評価票との対応表
 
@@ -519,6 +859,7 @@ sudo poweroff
 - [pam_pwquality(8)](https://manpages.debian.org/trixie/libpam-pwquality/pam_pwquality.8.en.html)：品質設定、rootへの適用、旧新比較。
 - [sudoers(5)](https://manpages.debian.org/trixie/sudo/sudoers.5.en.html)：sudoの権限とログ設定。
 - [crontab(5)](https://manpages.debian.org/trixie/cron/crontab.5.en.html)：時刻指定と起動時実行。
+- [Oracle VM VirtualBox 7.0 User Guide](https://docs.oracle.com/en/virtualization/virtualbox/7.0/user/)：VM状態、スナップショット、クローン、`VBoxManage` の公式手順。
 - VM内の `man sshd_config`、`man ufw`、`man lvm`、`man cryptsetup`、`man wall`：インストール済み版の設定・操作。
 
 ### AI usage
