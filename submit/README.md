@@ -8,10 +8,6 @@
 
 提出物は、この `README.md` と `signature.txt` を提出リポジトリのルートに置いたものです。VM本体はGitに含めません。以下に構成と採用理由、評価順の説明・実演手順を示します。
 
-構成と検証記録は2026-09-30の学内VMに基づきます。再起動後のサービス、SSH接続とroot接続拒否、不適合パスワードの拒否、sudoの認証制限とログ、複数SSH端末への手動wall配信、cronの起動時・00・10・20分の実行履歴を確認済みです。主なGUIパッケージとdesktop taskの不在、スナップショットがない停止状態も確認しました。cronの実行履歴だけでは全端末への表示を証明できないため、評価時に実表示も確認します。
-
-`signature.txt` は同日に完全停止した `Born2BeRoot-amd64.vdi` のSHA-1です。以後原本を起動・変更した場合は、提出前に完全停止して再計算します。以下の評価中の変更操作を、すべて事前に実演済みという意味ではありません。
-
 ## Project description
 
 ### OSの選択と比較：Debian vs Rocky Linux
@@ -70,6 +66,8 @@ VirtualBoxは複数のホストOSに対応した仮想化ソフトウェアで�
 
 **ホスト側**と明記したもの以外は、VM内の一般ユーザーから実行します。パスワードはプロンプトで入力します。再起動・対話編集・SSH接続の前後で操作が切り替わるため、全体を一括実行せず、各項目の説明に沿って進めます。
 
+提出物の欠落・名前や配置の誤り、必須項目の不動作、必要な説明の不足があれば、評価票に従ってその時点で評価を終了します。
+
 ### 0. 事前確認
 
 本人立ち会いのもと、学生の端末で正式な提出リポジトリを未使用のディレクトリへクローンします。ホスト側でGit等を置き換えるエイリアス・関数がないことを確認し、補助スクリプトを使う場合は内容を評価者と一緒に読みます。
@@ -90,18 +88,9 @@ remoteが本人の正式な提出先で、追跡する課題提出ファイル�
 
 ### 1. 全般的な確認：署名・スナップショット・起動
 
-`signature.txt` は、完全停止したVMの仮想ディスク全体から計算するSHA-1です。GitのコミットIDではありません。照合前に「電源オフ」とスナップショットなしを確認します。評価前から起動中のVMや保存状態のVMは使いません。
+クローンしたリポジトリのルートにある `signature.txt` を使います。これは完全停止したVMの仮想ディスク全体のSHA-1で、GitのコミットIDではありません。原本を起動・変更した場合は、提出前に完全停止して再計算する必要があります。
 
-```sh
-# ホスト側。VM_NAMEは登録された正確な名前に合わせる。
-VBoxManage list vms
-VM_NAME='Born2BeRoot-amd64'
-VBoxManage showvminfo "$VM_NAME" --machinereadable | grep '^VMState='
-VBoxManage snapshot "$VM_NAME" list
-VBoxManage showvminfo "$VM_NAME"
-```
-
-期待結果は `VMState="poweroff"`、名前付きスナップショットなしです。最後の出力のStorage欄で接続中のVDIを特定し、次の `VM_DISK` と一致することを確認します。移動している場合は実パスへ置き換えます。
+照合前にVirtualBoxで `Born2BeRoot-amd64` が「電源オフ」であることを確認します。評価前から起動中のVMや保存状態のVMは使いません。「設定」→「ストレージ」で接続中のVDIの場所を確認し、次の `VM_DISK` と一致することを確認します。移動している場合は実パスへ置き換えます。
 
 ```sh
 # ホスト側。VMは電源オフのまま実行する。
@@ -113,7 +102,7 @@ diff -u signature.txt "$ACTUAL_SIGNATURE"
 
 期待結果は `diff` の出力なし・終了値0です。不一致なら評価を終了し、その場で提出署名を書き換えて照合を通しません。
 
-署名一致とスナップショットなしを確認した後、原本を保護します。このVMでは、VirtualBoxの「スナップショット」画面で停止状態の評価用スナップショット `b2br-evaluation` を作る方法を基本とします。代替として「クローン」から `Born2BeRoot-amd64-evaluation` を別ディレクトリへFull Cloneし、複製VDIを参照することを確認しても構いません。
+署名一致を確認したら、VirtualBoxの「スナップショット」画面で名前付きスナップショットがないことを確認します。その後、停止状態の評価用スナップショット `b2br-evaluation` を作って原本を保護します。代替として「クローン」から `Born2BeRoot-amd64-evaluation` を別ディレクトリへFull Cloneし、複製VDIを参照することを確認しても構いません。
 
 スナップショット方式なら元のVM、クローン方式なら評価用クローンだけを起動します。起動による書き込みが原本VDIに直接入らないよう、保護を済ませてから進めます。
 
@@ -142,15 +131,12 @@ AppArmorはプログラムごとのプロファイルでファイルアクセス
 ```sh
 dpkg-query -W -f='${binary:Package}\t${db:Status-Status}\n' | grep -Ei 'xserver|xorg|xwayland|weston|gdm|lightdm|sddm|task-.*desktop|gnome-shell|plasma-desktop'
 whoami
+systemctl is-active ufw
+systemctl is-active ssh
 cat /etc/os-release
-uname -m
-systemctl get-default
-systemctl is-enabled apparmor ssh ufw cron
-systemctl is-active apparmor ssh ufw cron
-sudo aa-status
 ```
 
-期待結果：ユーザー名は `mhashimo`、OSはDebian、アーキテクチャは `x86_64`、起動ターゲットは `multi-user.target` です。AppArmor・SSH・UFW・cronは起動時有効（`enabled`）かつ現在稼働中（`active`）で、`aa-status` に読み込まれたプロファイルとモードが表示されることを確認します。パッケージ一覧では `installed` のグラフィックサーバーがないことを確認します。共有ライブラリはサーバー本体と区別し、CUIで起動したことだけでは未導入と判断しません。
+パッケージ一覧では `installed` のグラフィックサーバーがないことを確認します。共有ライブラリはサーバー本体と区別し、CUIで起動したことだけでは未導入と判断しません。続く期待結果は、ユーザー名が `mhashimo`、UFW・SSHがそれぞれ `active`、OSがDebianです。
 
 ### 5. User step 1：ユーザー・パスワードポリシー
 
@@ -231,7 +217,7 @@ sudoedit /etc/hosts
 lsblk -f
 ```
 
-暗号化領域の下にLVMのroot/home/swapがあり、`/`・`/home`・swapとして使われていることを課題の必須例と比較します。図の容量は例示です。
+暗号化領域の下にLVMのroot/home/swapがあり、`/`・`/home`・swapとして使われていることを課題の必須例と比較します。
 
 LVM（Logical Volume Manager）は容量を柔軟に割り当てる仕組みです。ディスクやパーティションをPV（物理ボリューム）として登録し、VG（ボリュームグループ）にまとめ、そこからLV（論理ボリューム）を切り出します。このVMはLUKS2の暗号化領域をPVとし、`mhashimo-vg` からroot・home・swapを作っています。LUKSがデータを暗号化し、LVMが容量を管理します。
 
@@ -272,15 +258,6 @@ sudo tail -n 10 /var/log/sudo/sudo.log
 
 期待結果はディレクトリ内にログファイルがあり、既存のコマンド履歴が読め、実行後に `COMMAND=/usr/bin/id` が追加されることです。コマンド履歴と入出力ログは別の記録です。
 
-入出力ログは `sudo sudoreplay -d /var/log/sudo -l` で一覧を示し、一覧のIDを `sudo sudoreplay -d /var/log/sudo SESSION_ID` で再生します。保存先が下位ディレクトリなら `-d` を `iolog_dir` の実値に合わせます。
-
-認証制限は次を実行して意図的に3回誤入力し、独自メッセージと実行拒否を確認します。
-
-```sh
-sudo -k
-sudo /usr/bin/true
-```
-
 ### 9. UFW / Firewalld
 
 ```sh
@@ -308,12 +285,11 @@ dpkg-query -W -f='${db:Status-Status}\n' openssh-server
 `installed` で、基本設定で確認したサービスが `active` であることが必要です。SSHはサーバー認証とユーザー認証を行い、通信を暗号化してリモート操作する仕組みです。パスワードや操作内容を平文で流さず、VMに別端末から安全に接続できます。
 
 ```sh
-sudo /usr/sbin/sshd -t
 sudo /usr/sbin/sshd -T | grep -E '^(port|permitrootlogin) '
 sudo ss -ltnp
 ```
 
-期待結果は構文エラーなし、`port 4242`、`permitrootlogin no` です。実効設定と実際の待受を確認し、SSHプロセスが4242だけを使っていることを示します。IPv4とIPv6で複数行でも同じポートなら構いません。
+期待結果は `port 4242`、`permitrootlogin no` です。実効設定と実際の待受を確認し、SSHプロセスが4242だけを使っていることを示します。IPv4とIPv6で複数行でも同じポートなら構いません。
 
 **学内ホスト側の別端末**から、新規ユーザーで接続します。この環境はVirtualBoxのNATでホスト4242→VM4242を転送します。別ホストやブリッジ接続を使う場合は、接続先と転送設定を確認して読み替えます。
 
@@ -325,8 +301,6 @@ ssh -p 4242 reviewer42@localhost
 
 ```sh
 whoami
-id
-sudo -l
 exit
 ```
 
@@ -344,8 +318,6 @@ ssh -p 4242 root@localhost
 
 ```sh
 sudo cat /usr/local/bin/monitoring.sh
-sudo stat -c '%a %U:%G %n' /usr/local/bin/monitoring.sh
-sudo /usr/local/bin/monitoring.sh
 ```
 
 `monitoring.sh` はBashで情報を集計して標準出力へ表示します。リポジトリのスクリプトをVMへ転送し、root所有・権限0755で配置しています。rootのcronがその出力を `wall` に渡し、ログイン中の全端末へ配信します。
@@ -378,15 +350,6 @@ sudo crontab -l
 ```
 
 `@reboot` はcron起動時に1回、`*/10` は毎時0・10・20・30・40・50分に実行します。起動が12:03なら、起動時に続き12:10、12:20…となり、起動時刻から厳密な600秒間隔ではありません。コンソールとSSH端末を開き、通常周期で全端末に通知が届き、エラーが表示されないことを確認します。
-
-配信先と実行状況は次で確認できます。手動配信の成功、cronの実行履歴、定期配信の実表示はそれぞれ確認します。
-
-```sh
-who
-mesg
-sudo /usr/local/bin/monitoring.sh | sudo /usr/bin/wall
-sudo journalctl -u cron --since '15 minutes ago' --no-pager
-```
 
 #### 毎分実行へ変更
 
@@ -438,9 +401,11 @@ sudo crontab -l
 
 期待結果はハッシュが `OK`、`diff` が差分なし、監視の2行がコメントのままであることです。再起動後も毎分の境界を2回以上またぎ、通知が来ないことを確認します。
 
-### 評価終了後
+### 12. ボーナス
 
-この構成にはボーナス構築の確認記録はありません。root/home/swapは必須構成として説明し、ボーナス例の個別LVや追加サービスを構築済みとは扱いません。
+ボーナスは必須項目がすべて合格した場合のみ評価します。このREADMEで扱うのはroot/home/swapの必須構成で、ボーナスの追加パーティション・WordPress・自由選択サービスは対象に含めません。
+
+### 評価終了後
 
 停止の確認を終えてから、評価用VMを停止します。
 
