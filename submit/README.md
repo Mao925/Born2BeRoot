@@ -4,9 +4,13 @@
 
 ## Description
 
-VirtualBox上にDebian 13 ARM64の仮想サーバーを構築し、暗号化ディスク、ユーザー・権限管理、SSH、ファイアウォール、定期監視を設定するシステム管理の課題です。GUIを使わず、必要なサービスに絞ったサーバーを構築し、設定の意味と動作を説明できることを目標とします。
+学内のx86_64端末上にVirtualBox 7.0.26でDebian 13 AMD64の仮想サーバーを構築し、暗号化ディスク、ユーザー・権限管理、SSH、ファイアウォール、定期監視を設定するシステム管理の課題です。GUIを使わず、必要なサービスに絞ったサーバーを構築し、設定の意味と動作を説明できることを目標とします。
 
 提出物は、この `README.md` と `signature.txt` を提出リポジトリのルートに置いたものです。VM本体はGitに含めません。以下に構成と採用理由、評価順の説明・実演手順を示します。
+
+構成と検証記録は2026-09-30の学内VMに基づきます。再起動後のサービス、SSH接続とroot接続拒否、不適合パスワードの拒否、sudoの認証制限とログ、複数SSH端末への手動wall配信、cronの起動時・00・10・20分の実行履歴を確認済みです。主なGUIパッケージとdesktop taskの不在、スナップショットがない停止状態も確認しました。cronの実行履歴だけでは全端末への表示を証明できないため、評価時に実表示も確認します。
+
+`signature.txt` は同日に完全停止した `Born2BeRoot-amd64.vdi` のSHA-1です。以後原本を起動・変更した場合は、提出前に完全停止して再計算します。以下の評価中の変更操作を、すべて事前に実演済みという意味ではありません。
 
 ## Project description
 
@@ -25,7 +29,7 @@ Debianを選んだ理由は、課題が初学者向けに推奨しており、�
 
 | 項目 | 構成と目的 |
 | --- | --- |
-| 仮想化・起動 | VirtualBox、CUIで管理するDebian 13 ARM64。グラフィックサーバーを導入せず、サービスを最小限にする |
+| 仮想化・起動 | 学内x86_64ホストのVirtualBox 7.0.26、CUIで管理するDebian 13 AMD64。グラフィックサーバーを導入せず、サービスを最小限にする |
 | パーティション | EFI、`/boot`、LUKS2内のLVM root/home/swap。暗号化と容量管理を組み合わせる |
 | ユーザー管理 | rootとは別に `mhashimo` を作成し、`sudo`・`user42` に所属。管理操作だけsudoで昇格する |
 | パスワード | 有効期限30日、変更間隔2日、警告7日前、PAMによる品質検査 |
@@ -62,7 +66,7 @@ VirtualBoxは複数のホストOSに対応した仮想化ソフトウェアで�
 
 ## Instructions
 
-コンパイルは不要です。VirtualBoxに構築済みのVMを用意し、指定された評価端末で以下の順に確認します。署名照合と原本の保護を済ませてから、VirtualBoxの画面でVMを起動します。
+コンパイルは不要です。学内のx86_64端末にあるVirtualBoxで構築済みVMを確認します。署名照合、スナップショット確認、VMの起動・再起動、NATポート転送の確認はこのホスト側で行います。署名照合と原本の保護を済ませてからVMを起動します。
 
 **ホスト側**と明記したもの以外は、VM内の一般ユーザーから実行します。パスワードはプロンプトで入力します。再起動・対話編集・SSH接続の前後で操作が切り替わるため、全体を一括実行せず、各項目の説明に沿って進めます。
 
@@ -73,29 +77,45 @@ VirtualBoxは複数のホストOSに対応した仮想化ソフトウェアで�
 ```sh
 # ホスト側。URLを正式な提出先に置き換える。
 type -a git shasum diff
+alias
+git config --show-origin --get-regexp '^alias\.'
 git clone 'OFFICIAL_REPOSITORY_URL' born2beroot-evaluation
 cd born2beroot-evaluation
 git remote -v
+git ls-files
 ls README.md signature.txt
 ```
 
-remoteが本人の正式な提出先で、提出物の名前と配置が正しいことを確認します。
+remoteが本人の正式な提出先で、追跡する課題提出ファイルがルートの `README.md` と `signature.txt` だけであることを確認します。Git aliasがなければ `--get-regexp` は出力なし・終了値1です。
 
 ### 1. 全般的な確認：署名・スナップショット・起動
 
-`signature.txt` は、完全停止したVMの仮想ディスク全体から計算するSHA-1です。GitのコミットIDではありません。照合前にVirtualBoxの画面で「電源オフ」であることを確認します。評価前から起動中のVMや保存状態のVMは使いません。接続されている `.vdi` の実パスを調べ、ホスト側で照合します。
+`signature.txt` は、完全停止したVMの仮想ディスク全体から計算するSHA-1です。GitのコミットIDではありません。照合前に「電源オフ」とスナップショットなしを確認します。評価前から起動中のVMや保存状態のVMは使いません。
 
 ```sh
-# ホスト側。VM_DISKを実際のディスクの絶対パスに置き換える。
-VM_DISK='/absolute/path/to/Born2BeRoot-Manual.vdi'
+# ホスト側。VM_NAMEは登録された正確な名前に合わせる。
+VBoxManage list vms
+VM_NAME='Born2BeRoot-amd64'
+VBoxManage showvminfo "$VM_NAME" --machinereadable | grep '^VMState='
+VBoxManage snapshot "$VM_NAME" list
+VBoxManage showvminfo "$VM_NAME"
+```
+
+期待結果は `VMState="poweroff"`、名前付きスナップショットなしです。最後の出力のStorage欄で接続中のVDIを特定し、次の `VM_DISK` と一致することを確認します。移動している場合は実パスへ置き換えます。
+
+```sh
+# ホスト側。VMは電源オフのまま実行する。
+VM_DISK='/sgoinfre/mhashimo/Born2BeRoot-x86/Born2BeRoot-amd64/Born2BeRoot-amd64.vdi'
 ACTUAL_SIGNATURE=$(mktemp)
 shasum -a 1 "$VM_DISK" | awk '{print $1}' > "$ACTUAL_SIGNATURE"
 diff -u signature.txt "$ACTUAL_SIGNATURE"
 ```
 
-期待結果は `diff` の出力なし・終了値0です。不一致なら評価を終了します。
+期待結果は `diff` の出力なし・終了値0です。不一致なら評価を終了し、その場で提出署名を書き換えて照合を通しません。
 
-次にVirtualBoxの画面でスナップショットがないことを確認します。VMを起動する前に、停止状態の評価用スナップショットを作るか、仮想ディスクを別ディレクトリへ複製し、コピーを接続した評価用VMを用意します。原本は起動による書き込みから保護し、署名を維持します。保護を済ませてから電源オフの状態から起動します。
+署名一致とスナップショットなしを確認した後、原本を保護します。このVMでは、VirtualBoxの「スナップショット」画面で停止状態の評価用スナップショット `b2br-evaluation` を作る方法を基本とします。代替として「クローン」から `Born2BeRoot-amd64-evaluation` を別ディレクトリへFull Cloneし、複製VDIを参照することを確認しても構いません。
+
+スナップショット方式なら元のVM、クローン方式なら評価用クローンだけを起動します。起動による書き込みが原本VDIに直接入らないよう、保護を済ませてから進めます。
 
 ### 2. README.mdの確認
 
@@ -103,7 +123,7 @@ diff -u signature.txt "$ACTUAL_SIGNATURE"
 
 ### 3. プロジェクト概要
 
-仮想マシンは、ホスト上の仮想化ソフトウェアがCPU・メモリ・ディスク・ネットワークなどの仮想的なハードウェアを提供し、その中で独立したゲストOSを動かす仕組みです。この構成ではMacがホスト、Debianがゲストです。
+仮想マシンは、ホスト上の仮想化ソフトウェアがCPU・メモリ・ディスク・ネットワークなどの仮想的なハードウェアを提供し、その中で独立したゲストOSを動かす仕組みです。この構成では学内のx86_64端末がホスト、Debian 13 AMD64がゲストです。
 
 選んだOSはDebianです。初学者向けとして課題が推奨し、資料が豊富で、APT・UFW・AppArmorを使って必要な管理を学べるためです。Debianはdpkg/APTで `.deb` を管理し、RockyはRHEL互換でRPM/DNFを使って `.rpm` を管理します。両者の長所・短所は上の比較表に示しています。
 
@@ -122,12 +142,15 @@ AppArmorはプログラムごとのプロファイルでファイルアクセス
 ```sh
 dpkg-query -W -f='${binary:Package}\t${db:Status-Status}\n' | grep -Ei 'xserver|xorg|xwayland|weston|gdm|lightdm|sddm|task-.*desktop|gnome-shell|plasma-desktop'
 whoami
-systemctl is-active ufw
-systemctl is-active ssh
 cat /etc/os-release
+uname -m
+systemctl get-default
+systemctl is-enabled apparmor ssh ufw cron
+systemctl is-active apparmor ssh ufw cron
+sudo aa-status
 ```
 
-期待結果：ユーザー名は `mhashimo`、UFW・SSHは `active`、OSはDebianです。パッケージ一覧では `installed` のグラフィックサーバーがないことを確認します。表示される共有ライブラリはサーバー本体と区別し、CUIで起動したことだけでは未導入と判断しません。
+期待結果：ユーザー名は `mhashimo`、OSはDebian、アーキテクチャは `x86_64`、起動ターゲットは `multi-user.target` です。AppArmor・SSH・UFW・cronは起動時有効（`enabled`）かつ現在稼働中（`active`）で、`aa-status` に読み込まれたプロファイルとモードが表示されることを確認します。パッケージ一覧では `installed` のグラフィックサーバーがないことを確認します。共有ライブラリはサーバー本体と区別し、CUIで起動したことだけでは未導入と判断しません。
 
 ### 5. User step 1：ユーザー・パスワードポリシー
 
@@ -145,11 +168,12 @@ grep -E '^(PASS_MAX_DAYS|PASS_MIN_DAYS|PASS_WARN_AGE)' /etc/login.defs
 sudo chage -l reviewer42
 sudo chage -l mhashimo
 sudo chage -l root
-cat /etc/pam.d/common-password
-cat /etc/security/pwquality.conf
+sudo cat /etc/pam.d/common-password
+sudo cat /etc/security/pwquality.conf
+sudo find /etc/security/pwquality.conf.d -maxdepth 1 -type f -name '*.conf' -exec cat {} \;
 ```
 
-`/etc/login.defs` は新規アカウントの期限の既定値です。`chage -l` は各アカウントに適用されている期限を表示します。PAMは認証やパスワード変更の処理をモジュールに分ける仕組みで、`common-password` から `pam_pwquality` を呼び、品質を検査します。品質の値は `pwquality.conf` に設定し、PAM行の引数や追加設定があればその上書きも説明します。
+`/etc/login.defs` は新規アカウントの期限の既定値です。`chage -l` は各アカウントに適用されている期限を表示します。PAMは認証やパスワード変更の処理をモジュールに分ける仕組みで、`common-password` から `pam_pwquality` を呼び、品質を検査します。`pwquality.conf`、追加の `.conf`、PAM行の引数を合わせて有効な設定を説明します。追加設定ディレクトリがなければ最後のコマンドのエラーは想定内です。
 
 | 要件 | 設定と意味 |
 | --- | --- |
@@ -163,7 +187,7 @@ cat /etc/security/pwquality.conf
 | 前のパスワードに含まれない文字を7文字以上含む | `difok=7`。変更時の挿入・削除・置換などの差分を検査 |
 | rootにも品質を強制 | `enforce_for_root`。不適合な候補を警告だけでなく拒否 |
 
-旧パスワードとの比較だけはrootのパスワードに適用しません。rootによる変更では旧パスワードを入力しないため、一般ユーザーの旧新比較はそのユーザー自身のパスワード変更で行われます。設定後はrootを含む既存アカウントのパスワードも変更します。
+旧パスワードとの比較だけはrootのパスワードに適用しません。rootによる変更では旧パスワードを入力しないため、一般ユーザーの旧新比較はそのユーザー自身の `passwd` で確認します。`sudo passwd reviewer42` では旧新比較になりません。最小2日の期限による拒否と品質による拒否を区別し、設定後にrootを含む既存アカウントのパスワードも変更したことを説明します。
 
 ### 6. User step 2：グループ・ポリシーの利点と負担
 
@@ -248,6 +272,15 @@ sudo tail -n 10 /var/log/sudo/sudo.log
 
 期待結果はディレクトリ内にログファイルがあり、既存のコマンド履歴が読め、実行後に `COMMAND=/usr/bin/id` が追加されることです。コマンド履歴と入出力ログは別の記録です。
 
+入出力ログは `sudo sudoreplay -d /var/log/sudo -l` で一覧を示し、一覧のIDを `sudo sudoreplay -d /var/log/sudo SESSION_ID` で再生します。保存先が下位ディレクトリなら `-d` を `iolog_dir` の実値に合わせます。
+
+認証制限は次を実行して意図的に3回誤入力し、独自メッセージと実行拒否を確認します。
+
+```sh
+sudo -k
+sudo /usr/bin/true
+```
+
 ### 9. UFW / Firewalld
 
 ```sh
@@ -275,13 +308,14 @@ dpkg-query -W -f='${db:Status-Status}\n' openssh-server
 `installed` で、基本設定で確認したサービスが `active` であることが必要です。SSHはサーバー認証とユーザー認証を行い、通信を暗号化してリモート操作する仕組みです。パスワードや操作内容を平文で流さず、VMに別端末から安全に接続できます。
 
 ```sh
+sudo /usr/sbin/sshd -t
 sudo /usr/sbin/sshd -T | grep -E '^(port|permitrootlogin) '
 sudo ss -ltnp
 ```
 
-期待結果は `port 4242`、`permitrootlogin no` です。実効設定と実際の待受を確認し、SSHプロセスが4242だけを使っていることを示します。IPv4とIPv6で複数行でも同じポートなら構いません。
+期待結果は構文エラーなし、`port 4242`、`permitrootlogin no` です。実効設定と実際の待受を確認し、SSHプロセスが4242だけを使っていることを示します。IPv4とIPv6で複数行でも同じポートなら構いません。
 
-**ホスト側の別端末**から、新規ユーザーで接続します。次はVirtualBoxのNATでホスト4242→VM4242を転送する構成の例です。接続先が異なる場合は `localhost` をVMのIPに置き換えます。
+**学内ホスト側の別端末**から、新規ユーザーで接続します。この環境はVirtualBoxのNATでホスト4242→VM4242を転送します。別ホストやブリッジ接続を使う場合は、接続先と転送設定を確認して読み替えます。
 
 ```sh
 ssh -p 4242 reviewer42@localhost
@@ -291,6 +325,8 @@ ssh -p 4242 reviewer42@localhost
 
 ```sh
 whoami
+id
+sudo -l
 exit
 ```
 
@@ -308,9 +344,11 @@ ssh -p 4242 root@localhost
 
 ```sh
 sudo cat /usr/local/bin/monitoring.sh
+sudo stat -c '%a %U:%G %n' /usr/local/bin/monitoring.sh
+sudo /usr/local/bin/monitoring.sh
 ```
 
-`monitoring.sh` はBashで情報を集計して標準出力へ表示します。rootのcronがその出力を `wall` に渡し、ログイン中の全端末へ配信します。
+`monitoring.sh` はBashで情報を集計して標準出力へ表示します。リポジトリのスクリプトをVMへ転送し、root所有・権限0755で配置しています。rootのcronがその出力を `wall` に渡し、ログイン中の全端末へ配信します。
 
 | 表示項目 | コードの取得・集計方法 |
 | --- | --- |
@@ -340,6 +378,15 @@ sudo crontab -l
 ```
 
 `@reboot` はcron起動時に1回、`*/10` は毎時0・10・20・30・40・50分に実行します。起動が12:03なら、起動時に続き12:10、12:20…となり、起動時刻から厳密な600秒間隔ではありません。コンソールとSSH端末を開き、通常周期で全端末に通知が届き、エラーが表示されないことを確認します。
+
+配信先と実行状況は次で確認できます。手動配信の成功、cronの実行履歴、定期配信の実表示はそれぞれ確認します。
+
+```sh
+who
+mesg
+sudo /usr/local/bin/monitoring.sh | sudo /usr/bin/wall
+sudo journalctl -u cron --since '15 minutes ago' --no-pager
+```
 
 #### 毎分実行へ変更
 
@@ -393,13 +440,17 @@ sudo crontab -l
 
 ### 評価終了後
 
+この構成にはボーナス構築の確認記録はありません。root/home/swapは必須構成として説明し、ボーナス例の個別LVや追加サービスを構築済みとは扱いません。
+
 停止の確認を終えてから、評価用VMを停止します。
 
 ```sh
 sudo poweroff
 ```
 
-コピー方式では評価用コピーを破棄し、原本へ変更を反映しません。スナップショット方式では評価前の状態へ復元してから評価用スナップショットを削除します。削除だけで変更をマージしないよう確認します。最後にスナップショットなしの状態と、原本のSHA-1が提出値と同じであることを再確認します。
+VirtualBoxで「電源オフ」になるまで待ちます。クローン方式では評価用クローンの名前と保存先を確認して削除し、原本へ変更を反映しません。スナップショット方式では `b2br-evaluation` を選んで「復元」し、評価後の状態を新たに保存せず、復元完了後に同スナップショットを「削除」します。削除だけで評価中の変更をマージしないよう、必ず復元を先に行います。
+
+最後に原本VMが電源オフ・スナップショットなしであることを確認し、1節の同じ `VM_DISK` でSHA-1照合を再実行します。`diff` は出力なし・終了値0が期待結果です。不一致なら署名を書き換えず、復元手順と起動したディスクを確認します。
 
 ## Resources
 
@@ -409,6 +460,7 @@ sudo poweroff
 - [pam_pwquality(8)](https://manpages.debian.org/trixie/libpam-pwquality/pam_pwquality.8.en.html)：品質設定、rootへの適用、旧新比較。
 - [sudoers(5)](https://manpages.debian.org/trixie/sudo/sudoers.5.en.html)：sudoの権限とログ設定。
 - [crontab(5)](https://manpages.debian.org/trixie/cron/crontab.5.en.html)：時刻指定と起動時実行。
+- [Oracle VM VirtualBox 7.0 User Guide](https://docs.oracle.com/en/virtualization/virtualbox/7.0/user/)：VM状態、スナップショット、クローンの公式手順。
 - VM内の `man sshd_config`、`man ufw`、`man lvm`、`man cryptsetup`、`man wall`：インストール済み版の設定・操作。
 
 ### AI usage

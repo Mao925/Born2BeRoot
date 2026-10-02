@@ -73,10 +73,40 @@ for key in PASS_MAX_DAYS PASS_MIN_DAYS PASS_WARN_AGE; do
     *) bad "$key=$value";;
   esac
 done
-for key in minlen ucredit lcredit dcredit maxrepeat usercheck difok; do
-  value=$(awk -F= -v key="$key" '$1 ~ "^[[:space:]]*" key "[[:space:]]*$" {gsub(/[[:space:]]/, "", $2); print $2; exit}' /etc/security/pwquality.conf 2>/dev/null || true)
-  [ -n "$value" ] && ok "pwquality defines $key=$value" || warning "pwquality does not define $key"
+pwquality_sources=()
+[ -f /etc/security/pwquality.conf ] && pwquality_sources+=(/etc/security/pwquality.conf)
+for file in /etc/security/pwquality.conf.d/*.conf; do
+  [ -f "$file" ] && pwquality_sources+=("$file")
 done
+if [ "${#pwquality_sources[@]}" -eq 0 ]; then
+  bad "no pwquality configuration file found"
+else
+  for key_expected in minlen:10 ucredit:-1 lcredit:-1 dcredit:-1 maxrepeat:3 usercheck:1 difok:7; do
+    key=${key_expected%%:*}
+    expected=${key_expected#*:}
+    value=$(awk -F= -v key="$key" '
+      {
+        sub(/#.*/, "")
+        if ($1 ~ "^[[:space:]]*" key "[[:space:]]*$") {
+          gsub(/[[:space:]]/, "", $2)
+          print $2
+        }
+      }
+    ' "${pwquality_sources[@]}" 2>/dev/null | tail -n 1)
+    [ "$value" = "$expected" ] && ok "pwquality $key=$value" || bad "pwquality $key=$value (expected $expected)"
+  done
+  if awk '
+    {
+      sub(/#.*/, "")
+      if ($0 ~ /^[[:space:]]*enforce_for_root([[:space:]]|$)/) found=1
+    }
+    END {exit found ? 0 : 1}
+  ' "${pwquality_sources[@]}" 2>/dev/null; then
+    ok "pwquality enforces policy for root"
+  else
+    bad "pwquality does not enforce policy for root"
+  fi
+fi
 grep -Eq 'pam_pwquality\.so' /etc/pam.d/common-password 2>/dev/null && ok "pam_pwquality is active" || bad "pam_pwquality is not in common-password"
 
 section "Sudo"
